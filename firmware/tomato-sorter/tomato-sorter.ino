@@ -17,7 +17,7 @@
 
 // --- 3. DEFINISI PIN RFID (WEMOS D1 MINI) ---
 #define SS_PIN  D8  // Pin SDA RFID
-#define RST_PIN D4  // Pin Reset RFID
+#define RST_PIN D4  // Pin Reset RFID done
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
