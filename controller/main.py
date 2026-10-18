@@ -1,9 +1,9 @@
 """Program utama di PC (TODO: integrator).
 
-Siklus per tomat:
-  1. Tunggu Arduino melapor READY.
-  2. Tunggu tomat hadir dan stabil di stasiun foto (presence).
-  3. Ambil gambar segar dari webcam (camera.read_fresh).
+Siklus per tomat (protokol v0.3):
+  1. Tunggu DETECT,<id> dari Arduino (IR terpicu, konveyor berhenti).
+  2. Tunggu capture.settle_after_detect_s agar tomat diam.
+  3. camera.read_fresh() -> gambar segar.
   4. vision.segment -> vision.extract_features.
   5. ml.predict -> grade.
   6. Kirim GRADE,<id>,<grade>; tunggu ACK, lalu DONE atau ERR.

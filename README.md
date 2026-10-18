@@ -6,11 +6,11 @@ Proyek terintegrasi untuk tiga mata kuliah: Workshop Sistem Tertanam, Pengolahan
 
 ## Alur kerja alat (ringkas)
 
-1. Tomat ditaruh manual di stasiun foto (terpisah dari conveyor).
+1. Sensor IR mendeteksi tomat, konveyor berhenti, firmware mengirim `DETECT,<id>`.
 2. Webcam mengambil gambar, modul `vision` mengekstrak fitur.
 3. Model (`ml`) menentukan grade A/B/C berdasarkan rubrik (`docs/RUBRIK.md`).
-4. `controller` (PC) mengirim `GRADE,<id>,<A|B|C>` ke Arduino lewat USB serial (`docs/PROTOCOL.md`).
-5. Arduino: servo 1 menendang tomat ke conveyor, servo 2 mengarahkan ke wadah sesuai grade, sensor IR mengonfirmasi, lalu melapor `DONE`.
+4. `controller` (PC) mengirim `GRADE,<id>,<A|B|C>` ke Arduino/ESP32 lewat USB serial (`docs/PROTOCOL.md`).
+5. Firmware: pusher mendorong tomat, konveyor berjalan, gate sesuai grade dibuka, lalu melapor `DONE`. Alur rinci: `docs/ALUR_ALAT.md`.
 
 ## Struktur repositori
 
@@ -25,7 +25,7 @@ Proyek terintegrasi untuk tiga mata kuliah: Workshop Sistem Tertanam, Pengolahan
 | `models/` | Model hasil pelatihan (tidak di-commit secara default) |
 | `docs/` | Rubrik, protokol serial, alur alat, panduan kontribusi, catatan uji |
 | `tests/` | Pengujian otomatis (pytest) |
-| `tools/` | Skrip bantu (mis. mengirim grade ke Arduino untuk uji protokol) |
+| `tools/` | Skrip bantu: `capture_dataset` (foto dataset), `extract_features_batch` (foto ke fitur), `send_grade` (uji protokol) |
 | `config.yaml` | Semua parameter (port, kamera, ambang, waktu). Jangan menulis angka di kode |
 
 ## Mulai cepat (PC)
@@ -38,7 +38,14 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
-Uji protokol ke Arduino (tanpa vision dan model):
+Ambil foto dan ekstrak fitur:
+
+```
+python -m tools.capture_dataset --start-id 1
+python -m tools.extract_features_batch
+```
+
+Uji protokol ke firmware (tanpa vision dan model):
 
 ```
 python -m tools.send_grade A --port COM3

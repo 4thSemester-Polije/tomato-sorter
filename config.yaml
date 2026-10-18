@@ -10,10 +10,8 @@ camera:
   height: 480
   flush_frames: 5       # buang frame lama dari buffer webcam sebelum mengambil gambar
 
-presence:               # deteksi kehadiran tomat di stasiun foto (frame differencing)
-  stable_seconds: 1.0
-  diff_threshold: null  # kalibrasi
-  min_area_px: null     # kalibrasi
+capture:
+  settle_after_detect_s: null   # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
 
 rubric:                 # lihat docs/RUBRIK.md
   red_ripe_min_pct: 60      # tingkat 1 bila merah >= nilai ini (acuan USDA)
@@ -23,12 +21,14 @@ rubric:                 # lihat docs/RUBRIK.md
 calibration:
   mm_per_pixel: null    # ukur dengan objek acuan pada jarak kamera tetap
 
-timeouts_s:             # batas tunggu tiap tahap, ukur dari alat nyata
-  grade_ack: null
-  tomato_arrival: null
-  tomato_in_bin: null
+timeouts_s:
+  grade_wait: null      # batas firmware menunggu GRADE setelah DETECT (ERR GRADE_TIMEOUT)
 
 paths:
-  labels_csv: data/labels.csv
   raw_images: data/raw
+  background_image: data/raw/background.jpg
+  photos_csv: data/photos.csv
+  labels_csv: data/labels.csv
+  features_csv: data/features.csv
+  debug_dir: data/debug
   models_dir: models

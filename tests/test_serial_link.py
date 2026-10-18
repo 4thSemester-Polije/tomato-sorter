@@ -8,10 +8,11 @@ def test_send_grade_writes_formatted_line():
     assert mock.written == [b"GRADE,7,C\n"]
 
 
-def test_full_cycle_with_noise():
-    mock = MockSerial([b"READY\n", b"garbage\n", b"ACK,7\n", b"DONE,7,C\n"])
+def test_full_cycle_with_debug_noise():
+    mock = MockSerial([b"READY\n", b"# servo1 kick\n", b"DETECT,7\n", b"garbage\n", b"ACK,7\n", b"DONE,7,C\n"])
     link = SerialLink(serial_obj=mock)
     assert link.wait_for({"READY"}, timeout_s=1)["type"] == "READY"
+    assert link.wait_for({"DETECT"}, timeout_s=1) == {"type": "DETECT", "id": 7}
     assert link.wait_for({"ACK"}, timeout_s=1) == {"type": "ACK", "id": 7}
     assert link.wait_for({"DONE", "ERR"}, timeout_s=1) == {"type": "DONE", "id": 7, "grade": "C"}
 

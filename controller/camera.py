@@ -11,14 +11,18 @@ class Camera:
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-    def read_fresh(self):
-        """Buang frame lama dari buffer, lalu ambil frame terbaru (BGR)."""
-        for _ in range(self.flush_frames):
-            self._cap.grab()
+    def read(self):
+        """Ambil satu frame (untuk pratinjau langsung)."""
         ok, frame = self._cap.read()
         if not ok:
             raise RuntimeError("Gagal membaca frame dari webcam")
         return frame
+
+    def read_fresh(self):
+        """Buang frame lama dari buffer, lalu ambil frame terbaru (untuk foto yang disimpan)."""
+        for _ in range(self.flush_frames):
+            self._cap.grab()
+        return self.read()
 
     def release(self):
         self._cap.release()

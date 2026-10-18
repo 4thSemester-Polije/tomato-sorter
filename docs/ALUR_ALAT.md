@@ -1,22 +1,34 @@
-# Alur Kerja Alat (sesuai rancangan tim hardware)
+# Alur Kerja Alat (disusun dari kode firmware ESP32 yang ada)
 
-Status: draft, menunggu penjelasan posisi sensor IR dan servo 2 relatif terhadap tiga wadah.
+Status: sebagian perlu dikonfirmasi tim hardware (lihat bagian akhir).
 
-1. Tomat ditaruh manual di stasiun foto (terpisah dari conveyor), pada dudukan kecil agar tidak menggelinding.
-2. PC mendeteksi tomat hadir (vision) dan mengambil gambar.
-3. PC menghitung grade, lalu mengirim `GRADE`.
-4. Servo 1 menendang tomat ke landasan conveyor (hanya SETELAH grade diterima).
-5. Conveyor berjalan. Servo 2 menendang sesuai grade.
-6. Sensor IR mengonfirmasi tomat masuk lubang, conveyor berhenti, Arduino melapor `DONE`.
+## Alur menurut kode
 
-## State machine Arduino (usulan)
+1. `CARI_BUAH`: konveyor berjalan. IR menunggu buah (debounce 50 ms, cooldown 500 ms setelah siklus).
+2. IR terpicu: konveyor BERHENTI, lalu firmware menunggu grade (saat ini diketik manual di serial monitor).
+3. `MENYODOK`: servo pusher membuka 90 derajat selama 1 detik, lalu kembali.
+4. `MENGANTAR`: konveyor berjalan, gate sesuai grade dibuka, selama waktu tetap (4 s untuk lurus, 4 s servo 2, 5 s servo 3).
+5. Gate ditutup, penghitung bertambah, kembali ke langkah 1.
 
-`READY -> [terima GRADE] -> KICK1 -> RUN -> ARRIVE -> KICK2 -> IN_BIN -> STOP -> DONE -> READY`
+## Pemetaan grade ke jalur fisik
 
-Setiap tahap menunggu punya batas waktu; bila terlewati pindah ke `ERROR` (conveyor berhenti, kirim `ERR`).
+| Grade rubrik | Nama lama di firmware | Jalur |
+|---|---|---|
+| A | matang | Gate servo 3 |
+| B | setengah | Gate servo 2 |
+| C | busuk | Jalur lurus (tanpa gate) |
 
-## Keputusan yang masih terbuka
+## Peran IR menurut kode
 
-- Posisi sensor IR dan servo 2 relatif terhadap tiga wadah.
-- Perlu tidaknya sensor IR kedua (sensor 1: tomat tiba di servo 2, sensor 2: konfirmasi masuk lubang).
-- Pemicu foto: deteksi otomatis oleh vision (usulan) dengan cadangan tombol/keyboard.
+IR di kode berfungsi sebagai pendeteksi kehadiran tomat yang memicu "berhenti dan minta grade". Ini juga menjadi pemicu foto (protokol `DETECT`). IR tidak dipakai untuk mengonfirmasi tomat masuk wadah; akhir pengantaran murni berbasis waktu.
+
+## Alur dengan PC (target)
+
+`READY` -> IR terpicu -> `DETECT,<id>` -> PC menunggu tomat diam, memotret, menghitung grade -> `GRADE,<id>,<g>` -> `ACK` -> pusher -> pengantaran -> `DONE` -> `READY`.
+
+## Perlu dikonfirmasi tim hardware
+
+- Posisi fisik IR: apakah saat IR terpicu dan konveyor berhenti, tomat tepat berada di stasiun foto (di bawah webcam)?
+- Tujuan konveyor berjalan saat menunggu tomat.
+- Urutan posisi gate servo 2 dan servo 3 sepanjang konveyor, dan apakah jalur lurus berakhir di wadah ketiga.
+- Perlu tidaknya sensor konfirmasi di wadah.

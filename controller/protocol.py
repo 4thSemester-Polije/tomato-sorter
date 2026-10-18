@@ -1,11 +1,12 @@
-"""Format dan parsing pesan serial PC <-> Arduino. Lihat docs/PROTOCOL.md (v0.2).
+"""Format dan parsing pesan serial PC <-> Arduino. Lihat docs/PROTOCOL.md (v0.3).
 
 Modul ini murni (tanpa pyserial) supaya mudah diuji.
+Baris yang diawali '#' adalah log debug dari firmware dan diabaikan.
 """
 from __future__ import annotations
 
 VALID_GRADES = ("A", "B", "C")
-ERROR_CODES = ("NO_ARRIVAL", "JAM", "BUSY", "BAD_CMD")
+ERROR_CODES = ("GRADE_TIMEOUT", "BUSY", "BAD_CMD", "NO_ARRIVAL", "JAM")
 
 
 def format_grade(tomato_id: int, grade: str) -> str:
@@ -19,15 +20,17 @@ def format_grade(tomato_id: int, grade: str) -> str:
 
 
 def parse_message(line: str) -> dict | None:
-    """Parse satu baris dari Arduino. Mengembalikan None bila kosong atau tidak valid."""
+    """Parse satu baris dari Arduino. None bila kosong, log debug, atau tidak valid."""
     line = line.strip()
-    if not line:
+    if not line or line.startswith("#"):
         return None
     parts = line.split(",")
     kind = parts[0].upper()
     try:
         if kind == "READY" and len(parts) == 1:
             return {"type": "READY"}
+        if kind == "DETECT" and len(parts) == 2:
+            return {"type": "DETECT", "id": int(parts[1])}
         if kind == "ACK" and len(parts) == 2:
             return {"type": "ACK", "id": int(parts[1])}
         if kind == "DONE" and len(parts) == 3 and parts[2].upper() in VALID_GRADES:

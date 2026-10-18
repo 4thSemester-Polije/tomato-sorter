@@ -1,1 +1,1 @@
-id_tomat,tanggal,nama_file,tingkat_kematangan,tingkat_cacat,grade,pelabel_1,pelabel_2,catatan
+id_tomat,pelabel_1,kematangan_1,cacat_1,pelabel_2,kematangan_2,cacat_2,tingkat_kematangan,tingkat_cacat,grade,catatan
