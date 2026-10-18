@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Editor
+.vscode/
+.idea/
+
+# Data mentah (gambar) - bagikan lewat folder bersama, bukan Git
+data/raw/*
+!data/raw/.gitkeep
+data/images/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# Model hasil pelatihan (commit manual dengan `git add -f` bila perlu)
+models/*
+!models/.gitkeep
+!models/README.md
+
+# OS
+.DS_Store
+Thumbs.db

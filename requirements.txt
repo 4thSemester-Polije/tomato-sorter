@@ -1,0 +1,14 @@
+# Versi belum dikunci. Setelah seluruh tim berhasil install,
+# jalankan `pip freeze` dan kunci versinya agar semua anggota memakai versi yang sama.
+numpy
+pandas
+opencv-python
+scikit-learn
+joblib
+pyserial
+pyyaml
+pytest
+
+# Dashboard (aktifkan nanti):
+# fastapi
+# uvicorn

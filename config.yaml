@@ -1,0 +1,34 @@
+# Semua parameter proyek. Nilai null = BELUM DIUKUR, isi setelah kalibrasi.
+serial:
+  port: COM3            # Windows: COMx | Linux: /dev/ttyUSB0 | macOS: /dev/tty.usbserial-xxx
+  baudrate: 115200
+  timeout_s: 1.0
+
+camera:
+  index: 0
+  width: 640
+  height: 480
+  flush_frames: 5       # buang frame lama dari buffer webcam sebelum mengambil gambar
+
+presence:               # deteksi kehadiran tomat di stasiun foto (frame differencing)
+  stable_seconds: 1.0
+  diff_threshold: null  # kalibrasi
+  min_area_px: null     # kalibrasi
+
+rubric:                 # lihat docs/RUBRIK.md
+  red_ripe_min_pct: 60      # tingkat 1 bila merah >= nilai ini (acuan USDA)
+  red_turning_min_pct: 10   # tingkat 2 bila merah >= nilai ini (acuan USDA)
+  defect_light_max_pct: 10  # USULAN tim, bukan standar. Kalibrasi dari foto nyata
+
+calibration:
+  mm_per_pixel: null    # ukur dengan objek acuan pada jarak kamera tetap
+
+timeouts_s:             # batas tunggu tiap tahap, ukur dari alat nyata
+  grade_ack: null
+  tomato_arrival: null
+  tomato_in_bin: null
+
+paths:
+  labels_csv: data/labels.csv
+  raw_images: data/raw
+  models_dir: models
