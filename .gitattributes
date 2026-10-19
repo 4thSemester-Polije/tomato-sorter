@@ -1,0 +1,8 @@
+# Paksa LF agar file .patch dan diff konsisten di Windows maupun Linux
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.zip binary
+*.joblib binary

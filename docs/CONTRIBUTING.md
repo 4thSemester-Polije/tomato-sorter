@@ -17,3 +17,22 @@
 - Settings -> Branches -> Add rule untuk `main`: wajib Pull Request dan minimal 1 approval.
 - Tambahkan semua anggota sebagai collaborator.
 - Gunakan tab Projects (kanban: To Do, Doing, Review, Done) untuk membagi tugas.
+
+## Menerapkan file .patch
+
+Dari root repo (PowerShell atau terminal):
+
+```
+git switch -c <modul>/<deskripsi>
+git apply --check <file>.patch     # uji kering, tidak mengubah apa pun
+git apply <file>.patch
+python -m pytest
+git add -A
+git commit
+```
+
+- Jangan menerapkan patch langsung di `main`. Buat branch, lalu Pull Request.
+- Terapkan patch berurutan sesuai nomor. Setiap patch menyebut basisnya.
+- Bila `--check` gagal, jangan dipaksa: file kemungkinan sudah berubah dari basis patch. Kirim pesan error dan versi file terbaru.
+- Bila error disebabkan line ending (Windows), coba `git apply --ignore-whitespace`. `.gitattributes` repo ini memaksa LF.
+- Commit atas nama sendiri. Cantumkan penggunaan bantuan AI sesuai ketentuan kampus.

@@ -18,6 +18,24 @@ Status: sebagian perlu dikonfirmasi tim hardware (lihat bagian akhir).
 | B | setengah | Gate servo 2 |
 | C | busuk | Jalur lurus (tanpa gate) |
 
+## Keputusan tim: stasiun foto
+
+Tomat ditaruh MANUAL oleh operator di stasiun foto, pada dudukan. Alasan: kondisi pengambilan gambar dapat diulang (posisi, jarak, cahaya sama setiap kali), bukan karena terlihat lebih profesional.
+
+Syarat stasiun:
+- Dudukan dangkal: cukup untuk mencegah tomat menggelinding, tetapi tidak menjebak sehingga pusher masih bisa mendorong tomat keluar.
+- Webcam tetap di atas dudukan, jarak tidak berubah. Lampu LED difus dalam light box tertutup, latar polos kontras.
+- IR mengarah ke dudukan.
+- Orientasi tomat sama setiap kali (diputuskan tim, lihat `docs/SOP_OPERATOR.md`).
+
+Konsekuensi: sistem ini SEMI-OTOMATIS (pemuatan tomat manual). Yang otomatis adalah inspeksi dan pemilahan. Tulis apa adanya di laporan.
+
+Sinkronisasi dengan PC:
+- IR memicu `DETECT`. PC menunggu tomat diam (`capture.settle_after_detect_s`) lalu memastikan ada tomat valid (mask tidak kosong dan luasnya wajar).
+- Jika tidak ada tomat valid (pemicu palsu, mis. hanya tangan), PC tidak membalas dan firmware berakhir di `GRADE_TIMEOUT`.
+
+Usulan firmware: konveyor MATI saat idle dan hanya menyala pada tahap `MENGANTAR`. Kode saat ini menyalakan konveyor saat idle (`CARI_BUAH`), yang tidak selaras dengan alur ini.
+
 ## Peran IR menurut kode
 
 IR di kode berfungsi sebagai pendeteksi kehadiran tomat yang memicu "berhenti dan minta grade". Ini juga menjadi pemicu foto (protokol `DETECT`). IR tidak dipakai untuk mengonfirmasi tomat masuk wadah; akhir pengantaran murni berbasis waktu.
@@ -28,7 +46,7 @@ IR di kode berfungsi sebagai pendeteksi kehadiran tomat yang memicu "berhenti da
 
 ## Perlu dikonfirmasi tim hardware
 
-- Posisi fisik IR: apakah saat IR terpicu dan konveyor berhenti, tomat tepat berada di stasiun foto (di bawah webcam)?
-- Tujuan konveyor berjalan saat menunggu tomat.
+- Verifikasi fisik: IR mengarah ke dudukan di stasiun foto, dan tomat pada dudukan berada di tengah bidang pandang webcam.
+- Konveyor berjalan saat idle di kode saat ini; usulan: mati saat idle. Konfirmasi.
 - Urutan posisi gate servo 2 dan servo 3 sepanjang konveyor, dan apakah jalur lurus berakhir di wadah ketiga.
 - Perlu tidaknya sensor konfirmasi di wadah.
