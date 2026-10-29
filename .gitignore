@@ -26,3 +26,8 @@ models/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Database dan frame dashboard (dibuat saat berjalan)
+data/*.db
+data/*.db-*
+data/*.tmp

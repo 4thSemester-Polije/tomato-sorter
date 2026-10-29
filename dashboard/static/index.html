@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stasiun pemilah tomat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Stasiun pemilah tomat</h1>
+    <ul class="pips" aria-label="Koneksi">
+      <li id="pip-server" class="pip"><span class="dot"></span>Server</li>
+      <li id="pip-serial" class="pip"><span class="dot"></span>Alat</li>
+      <li id="pip-kamera" class="pip"><span class="dot"></span>Kamera</li>
+    </ul>
+  </header>
+
+  <section class="statebar" id="statebar" aria-live="polite">
+    <ol class="steps" id="steps"></ol>
+    <p class="instruction" id="instruction">Menunggu kabar dari controller.</p>
+  </section>
+
+  <main class="grid">
+    <section class="live" aria-label="Kamera">
+      <div class="frame">
+        <img id="live-img" alt="Pratinjau kamera di stasiun foto" src="/stream">
+        <p class="overlay" id="live-overlay">Menunggu gambar dari controller.</p>
+      </div>
+    </section>
+
+    <section class="last" aria-label="Tomat terakhir">
+      <h2>Tomat terakhir</h2>
+      <div id="last-empty" class="empty">Belum ada tomat yang dinilai. Taruh tomat di dudukan saat status Siap.</div>
+      <div id="last-body" hidden>
+        <div class="last-head">
+          <span id="last-grade" class="grade-badge">-</span>
+          <div>
+            <p class="last-title" id="last-title"></p>
+            <p class="muted" id="last-meaning"></p>
+          </div>
+        </div>
+        <img id="last-photo" class="last-photo" alt="Hasil segmentasi tomat terakhir">
+        <dl class="facts" id="last-facts"></dl>
+      </div>
+    </section>
+
+    <section class="summary" aria-label="Ringkasan">
+      <h2>Hasil sejauh ini</h2>
+      <div id="sum-empty" class="empty">Belum ada data.</div>
+      <div id="sum-body" hidden>
+        <p class="total"><strong id="sum-total">0</strong> tomat dinilai</p>
+        <div class="split" id="split" role="img" aria-label="Proporsi grade"></div>
+        <ul class="split-legend" id="split-legend"></ul>
+        <p class="legend-note muted">A: matang, tanpa cacat. B: setengah matang atau cacat ringan. C: mentah atau cacat berat.</p>
+      </div>
+    </section>
+
+    <section class="throughput" aria-label="Laju">
+      <h2>Laju per menit</h2>
+      <svg id="spark" class="spark" role="img" aria-label="Tomat per menit"></svg>
+      <p class="muted" id="spark-caption"></p>
+      <p class="muted" id="latency"></p>
+    </section>
+
+    <section class="errors" aria-label="Error">
+      <h2>Error alat</h2>
+      <p id="err-empty" class="empty">Belum ada error.</p>
+      <ul id="err-list" class="err-list"></ul>
+    </section>
+
+    <section class="history" aria-label="Riwayat">
+      <div class="history-head">
+        <h2>Riwayat</h2>
+        <div class="filters" role="group" aria-label="Filter hasil" id="filters">
+          <button type="button" data-f="" aria-pressed="true">Semua</button>
+          <button type="button" data-f="A" aria-pressed="false">A</button>
+          <button type="button" data-f="B" aria-pressed="false">B</button>
+          <button type="button" data-f="C" aria-pressed="false">C</button>
+          <button type="button" data-f="ERR" aria-pressed="false">Error</button>
+        </div>
+        <a class="export" href="/api/export.csv" download>Unduh CSV</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Waktu</th><th>ID</th><th>Hasil</th><th class="num">Merah</th><th class="num">Gelap</th>
+              <th class="num">Diameter</th><th class="num">Keyakinan</th><th class="num">Latensi</th><th>Foto</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p id="rows-empty" class="empty" hidden>Tidak ada data untuk filter ini.</p>
+      <div class="pager">
+        <span class="muted" id="pager-info"></span>
+        <button type="button" id="prev">Sebelumnya</button>
+        <button type="button" id="next">Berikutnya</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="detail">
+    <form method="dialog" class="detail-close"><button>Tutup</button></form>
+    <img id="detail-img" alt="Foto segmentasi">
+    <dl class="facts" id="detail-facts"></dl>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

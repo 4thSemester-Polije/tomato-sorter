@@ -1,0 +1,215 @@
+/* Stasiun pemilah tomat.
+   Satu elemen yang menonjol: pita status di atas (urutan READY -> DONE). Sisanya sengaja tenang.
+   Warna grade selalu ditemani huruf, jadi tidak bergantung pada warna saja. */
+
+:root {
+  --paper: #edf0ee;
+  --panel: #f8faf9;
+  --ink: #17231e;
+  --muted: #5a6a62;
+  --line: #d3dbd6;
+  --band: #15251f;
+  --band-ink: #e8f0eb;
+  --band-dim: #7f9489;
+  --band-err: #8f3a2e;
+  --band-stale: #4a5651;
+  --focus: #1d6f5a;
+  --grade-a: #2e8b57;
+  --grade-b: #d8a016;
+  --grade-c: #a8483b;
+  --on-a: #ffffff;
+  --on-b: #17231e;
+  --on-c: #ffffff;
+  --ok: #2e8b57;
+  --bad: #a8483b;
+  --idle: #8a978f;
+  --font: "Avenir Next", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #101614;
+    --panel: #18201d;
+    --ink: #e5ede9;
+    --muted: #92a49b;
+    --line: #2b3733;
+    --band: #0a110e;
+    --focus: #5fc4a6;
+    --grade-a: #4cb87f;
+    --grade-b: #e0a62b;
+    --grade-c: #d9705f;
+    --on-a: #0d1a13;
+    --on-c: #1c0c08;
+    --ok: #4cb87f;
+    --bad: #d9705f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--paper); }
+
+body {
+  margin: 0 auto;
+  max-width: 1320px;
+  padding: 0 20px 40px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.5 var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+h1, h2, p, dl, dd, ul, ol { margin: 0; padding: 0; }
+h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+h2 { font-size: 15px; font-weight: 650; margin-bottom: 12px; }
+.muted { color: var(--muted); font-size: 14px; }
+.empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Bilah atas */
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0 14px; flex-wrap: wrap; }
+.pips { list-style: none; display: flex; gap: 18px; font-size: 14px; color: var(--muted); }
+.pip { display: flex; align-items: center; gap: 7px; }
+.pip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); }
+.pip.ok .dot { background: var(--ok); }
+.pip.bad .dot { background: var(--bad); }
+.pip.ok, .pip.bad { color: var(--ink); }
+
+.banner { background: var(--grade-b); color: var(--on-b); padding: 8px 14px; border-radius: 6px; font-size: 14px; margin-bottom: 12px; }
+
+/* Pita status */
+.statebar { background: var(--band); color: var(--band-ink); border-radius: 10px; padding: 22px 26px 24px; margin-bottom: 20px; transition: background-color 0.25s; }
+.statebar.err { background: var(--band-err); }
+.statebar.stale { background: var(--band-stale); }
+.steps { list-style: none; display: flex; align-items: center; gap: 0; flex-wrap: wrap; row-gap: 10px; }
+.step { display: flex; align-items: center; font-size: 14px; color: var(--band-dim); }
+.step + .step::before { content: ""; width: 34px; height: 2px; background: currentColor; opacity: 0.45; margin: 0 10px; }
+.step .pill { padding: 4px 12px; border-radius: 999px; border: 1.5px solid currentColor; }
+.step.done { color: var(--band-ink); }
+.step.done .pill { border-color: transparent; background: rgba(232, 240, 235, 0.16); }
+.step.active { color: var(--band); }
+.step.active .pill { background: var(--band-ink); border-color: var(--band-ink); font-weight: 650; }
+.statebar.err .step.active { color: var(--band-err); }
+.statebar.stale .step { color: var(--band-dim); }
+.instruction { font-size: 24px; line-height: 1.3; font-weight: 600; margin-top: 16px; max-width: 46ch; letter-spacing: -0.01em; }
+.instruction small { display: block; font-size: 14px; font-weight: 400; margin-top: 6px; color: var(--band-ink); opacity: 0.8; }
+
+/* Tata letak */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-areas:
+    "live last"
+    "summary last"
+    "throughput errors"
+    "history history";
+  gap: 20px;
+}
+.live { grid-area: live; }
+.last { grid-area: last; }
+.summary { grid-area: summary; }
+.throughput { grid-area: throughput; }
+.errors { grid-area: errors; }
+.history { grid-area: history; }
+
+.last, .summary, .throughput, .errors, .history {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 18px 20px 20px;
+}
+
+/* Kamera */
+.frame { position: relative; background: #0b100e; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; }
+.frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #c3d0c9; background: #0b100e; font-size: 15px; }
+.overlay[hidden] { display: none; }
+
+/* Tomat terakhir */
+.last-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.grade-badge { width: 60px; height: 60px; flex: none; border-radius: 10px; display: grid; place-items: center; font-size: 34px; font-weight: 700; background: var(--line); }
+.grade-badge.A { background: var(--grade-a); color: var(--on-a); }
+.grade-badge.B { background: var(--grade-b); color: var(--on-b); }
+.grade-badge.C { background: var(--grade-c); color: var(--on-c); }
+.last-title { font-size: 18px; font-weight: 650; }
+.last-photo { display: block; width: 100%; border-radius: 6px; margin-bottom: 14px; background: #0b100e; aspect-ratio: 4 / 3; object-fit: contain; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px; }
+.facts dt { color: var(--muted); }
+.facts dd { text-align: right; font-weight: 550; }
+
+/* Ringkasan */
+.total { font-size: 15px; margin-bottom: 12px; }
+.total strong { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin-right: 6px; }
+.split { display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: var(--line); gap: 2px; }
+.split span { display: block; height: 100%; }
+.split .A { background: var(--grade-a); }
+.split .B { background: var(--grade-b); }
+.split .C { background: var(--grade-c); }
+.split-legend { list-style: none; display: flex; gap: 22px; margin-top: 12px; flex-wrap: wrap; }
+.split-legend li { display: flex; align-items: baseline; gap: 8px; }
+.split-legend .letter { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; font-weight: 700; font-size: 13px; }
+.split-legend .letter.A { background: var(--grade-a); color: var(--on-a); }
+.split-legend .letter.B { background: var(--grade-b); color: var(--on-b); }
+.split-legend .letter.C { background: var(--grade-c); color: var(--on-c); }
+.split-legend .count { font-weight: 650; font-size: 18px; }
+.legend-note { margin-top: 12px; }
+
+/* Laju */
+.spark { display: block; width: 100%; height: 84px; margin-bottom: 8px; }
+.spark rect { fill: var(--focus); opacity: 0.85; }
+.spark line { stroke: var(--line); stroke-width: 1; }
+
+/* Error */
+.err-list { list-style: none; display: grid; gap: 10px; }
+.err-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+.err-list .code { font-weight: 650; font-size: 14px; }
+.err-list .n { font-weight: 700; color: var(--bad); }
+.err-list .hint { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+
+/* Riwayat */
+.history-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.history-head h2 { margin: 0; margin-right: auto; }
+.filters { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.filters button { border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; padding: 6px 14px; cursor: pointer; border-right: 1px solid var(--line); }
+.filters button:last-child { border-right: 0; }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); font-weight: 650; }
+.export { color: var(--ink); font-size: 14px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 600; color: var(--muted); font-size: 13px; }
+th.num, td.num { text-align: right; }
+td .chip { display: inline-block; min-width: 24px; text-align: center; padding: 0 7px; border-radius: 4px; font-weight: 700; font-size: 13px; }
+td .chip.A { background: var(--grade-a); color: var(--on-a); }
+td .chip.B { background: var(--grade-b); color: var(--on-b); }
+td .chip.C { background: var(--grade-c); color: var(--on-c); }
+td .chip.ERR { background: transparent; color: var(--bad); border: 1.5px solid var(--bad); }
+td button { border: 0; background: none; padding: 0; color: var(--focus); font: inherit; text-decoration: underline; cursor: pointer; }
+
+.pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+.pager .muted { margin-right: auto; }
+.pager button { font: inherit; font-size: 14px; padding: 6px 14px; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 6px; cursor: pointer; }
+.pager button:disabled { opacity: 0.4; cursor: default; }
+
+/* Dialog detail */
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); max-width: min(560px, 92vw); padding: 18px 20px 20px; }
+dialog::backdrop { background: rgba(8, 14, 11, 0.6); }
+dialog img { display: block; width: 100%; border-radius: 6px; margin: 8px 0 14px; background: #0b100e; }
+.detail-close { display: flex; justify-content: flex-end; }
+.detail-close button { font: inherit; font-size: 14px; padding: 4px 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 6px; cursor: pointer; }
+
+/* Layar sempit */
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "live" "last" "summary" "throughput" "errors" "history";
+  }
+  .instruction { font-size: 20px; }
+  .statebar { padding: 18px 18px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statebar { transition: none; }
+}
