@@ -9,6 +9,7 @@ pyserial
 pyyaml
 pytest
 
-# Dashboard (aktifkan nanti):
-# fastapi
-# uvicorn
+# Dashboard:
+fastapi
+uvicorn
+httpx  # hanya untuk tes dashboard (TestClient)
