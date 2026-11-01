@@ -20,6 +20,7 @@ from ml.resnext import (
     MODEL_NAME,
     RIPENESS_LEVELS,
     get_preprocess_input,
+    load_trusted_model,
 )
 from ml.rubric import grade_from_levels
 
@@ -48,10 +49,8 @@ def _load_models(models_dir: str) -> tuple[Any, Any, dict[str, Any], dict[str, A
         raise FileNotFoundError(
             "Trained model files are missing: " + ", ".join(missing)
         )
-    import tensorflow as tf
-
-    ripeness_model = tf.keras.models.load_model(paths[0])
-    defect_model = tf.keras.models.load_model(paths[1])
+    ripeness_model = load_trusted_model(paths[0])
+    defect_model = load_trusted_model(paths[1])
     ripeness_metadata = json.loads(
         paths[2].read_text(encoding="utf-8")
     )

@@ -25,6 +25,7 @@ from ml.resnext import (
     RIPENESS_LEVELS,
     create_model,
     get_preprocess_input,
+    load_trusted_model,
 )
 from ml.rubric import grade_from_levels
 
@@ -198,17 +199,28 @@ def _train_task(
     batch_size: int,
     head_epochs: int,
     fine_tune_epochs: int,
+    reuse_existing: bool = False,
 ) -> tuple[Any, dict[str, Any]]:
     import tensorflow as tf
 
     train_samples, validation_samples, test_samples = _split_samples(samples, seed)
     class_to_index = {name: index for index, name in enumerate(class_names)}
-    model, backbone, preprocess_input = create_model(task, len(class_names))
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_reused = reuse_existing and output_path.is_file()
+    if checkpoint_reused:
+        logger.info("Reusing existing model checkpoint: %s", output_path)
+        model = load_trusted_model(output_path)
+        backbone = None
+        preprocess_input = get_preprocess_input()
+        history: dict[str, list[float]] = {}
+    else:
+        model, backbone, preprocess_input = create_model(task, len(class_names))
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"],
+        )
+        history = {}
     train_data = _load_tensorflow_dataset(
         train_samples, class_to_index, preprocess_input, batch_size, True
     )
@@ -219,51 +231,53 @@ def _train_task(
         test_samples, class_to_index, preprocess_input, batch_size, False
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    callbacks = [
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_loss", patience=3, restore_best_weights=True
-        ),
-        tf.keras.callbacks.ModelCheckpoint(
-            filepath=str(output_path),
-            monitor="val_loss",
-            save_best_only=True,
-        ),
-    ]
-    history = model.fit(
-        train_data,
-        validation_data=validation_data,
-        epochs=head_epochs,
-        callbacks=callbacks,
-        verbose=2,
-    )
-    if fine_tune_epochs > 0:
-        backbone.trainable = True
-        for layer in backbone.layers[:-30]:
-            layer.trainable = False
-        for layer in backbone.layers:
-            if isinstance(layer, tf.keras.layers.BatchNormalization):
-                layer.trainable = False
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
-        fine_tune_history = model.fit(
+    if not checkpoint_reused:
+        callbacks = [
+            tf.keras.callbacks.EarlyStopping(
+                monitor="val_loss", patience=3, restore_best_weights=True
+            ),
+            tf.keras.callbacks.ModelCheckpoint(
+                filepath=str(output_path),
+                monitor="val_loss",
+                save_best_only=True,
+            ),
+        ]
+        fit_history = model.fit(
             train_data,
             validation_data=validation_data,
-            epochs=fine_tune_epochs,
+            epochs=head_epochs,
             callbacks=callbacks,
             verbose=2,
         )
-        history.history.update(
-            {
-                f"fine_tune_{key}": values
-                for key, values in fine_tune_history.history.items()
-            }
+        history.update(
+            {key: [float(value) for value in values] for key, values in fit_history.history.items()}
         )
+        if fine_tune_epochs > 0:
+            backbone.trainable = True
+            for layer in backbone.layers[:-30]:
+                layer.trainable = False
+            for layer in backbone.layers:
+                if isinstance(layer, tf.keras.layers.BatchNormalization):
+                    layer.trainable = False
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"],
+            )
+            fine_tune_history = model.fit(
+                train_data,
+                validation_data=validation_data,
+                epochs=fine_tune_epochs,
+                callbacks=callbacks,
+                verbose=2,
+            )
+            history.update(
+                {
+                    f"fine_tune_{key}": [float(value) for value in values]
+                    for key, values in fine_tune_history.history.items()
+                }
+            )
 
-    best_model = tf.keras.models.load_model(output_path)
     metadata = {
         "model": MODEL_NAME,
         "task": task,
@@ -297,13 +311,11 @@ def _train_task(
                 for sample in test_samples
             ],
         },
-        "test_metrics": _metric_report(best_model, test_data, class_names),
-        "history": {
-            key: [float(value) for value in values]
-            for key, values in history.history.items()
-        },
+        "test_metrics": _metric_report(model, test_data, class_names),
+        "history": history,
+        "checkpoint_reused": checkpoint_reused,
     }
-    return best_model, metadata
+    return model, metadata
 
 
 def _primary_test_samples(data_root: Path) -> list[tuple[Path, dict[str, Any]]]:
@@ -444,6 +456,7 @@ def train(
     batch_size: int = 16,
     head_epochs: int = 8,
     fine_tune_epochs: int = 5,
+    reuse_existing: bool = False,
 ) -> dict[str, Any]:
     """Train both heads and evaluate on secondary holdouts and primary photos."""
     if batch_size < 1:
@@ -479,6 +492,7 @@ def train(
         batch_size,
         head_epochs,
         fine_tune_epochs,
+        reuse_existing,
     )
     defect_model, defect_metadata = _train_task(
         "defect",
@@ -490,6 +504,7 @@ def train(
         batch_size,
         head_epochs,
         fine_tune_epochs,
+        reuse_existing,
     )
 
     for filename, metadata in (
@@ -527,6 +542,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--head-epochs", type=int, default=8)
     parser.add_argument("--fine-tune-epochs", type=int, default=5)
+    parser.add_argument(
+        "--reuse-existing-models",
+        action="store_true",
+        help="Reuse existing .keras checkpoints instead of training those tasks again.",
+    )
     args = parser.parse_args()
     results = train(
         args.data_root,
@@ -535,6 +555,7 @@ def main() -> None:
         args.batch_size,
         args.head_epochs,
         args.fine_tune_epochs,
+        args.reuse_existing_models,
     )
     print(json.dumps(results, indent=2, ensure_ascii=False))
 

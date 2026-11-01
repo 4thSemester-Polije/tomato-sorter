@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 INPUT_SIZE = (224, 224)
@@ -30,6 +31,12 @@ def get_preprocess_input() -> Any:
     """Return the ImageNet preprocessing function for the pretrained backbone."""
     _, _, preprocess_input = _keras_dependencies()
     return preprocess_input
+
+
+def load_trusted_model(path: str | Path) -> Any:
+    """Load a project-generated Keras artifact with its trusted Lambda layers."""
+    tf, _, _ = _keras_dependencies()
+    return tf.keras.models.load_model(path, safe_mode=False)
 
 
 def create_model(

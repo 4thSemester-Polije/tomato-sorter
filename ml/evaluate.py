@@ -7,18 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ml.resnext import load_trusted_model
 from ml.train import _evaluate_primary
 
 
 def evaluate(data_root: str | Path, models_dir: str | Path = "models") -> dict[str, Any]:
-    import tensorflow as tf
-
     root = Path(data_root)
     directory = Path(models_dir)
-    ripeness_model = tf.keras.models.load_model(
-        directory / "ripeness_resnext101.keras"
-    )
-    defect_model = tf.keras.models.load_model(directory / "defect_resnext101.keras")
+    ripeness_model = load_trusted_model(directory / "ripeness_resnext101.keras")
+    defect_model = load_trusted_model(directory / "defect_resnext101.keras")
     return _evaluate_primary(root, ripeness_model, defect_model, directory)
 
 
