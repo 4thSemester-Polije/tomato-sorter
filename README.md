@@ -18,12 +18,12 @@ Proyek terintegrasi untuk tiga mata kuliah: Workshop Sistem Tertanam, Pengolahan
 |---|---|
 | `firmware/` | Kode Arduino/ESP32: sensor, motor conveyor, servo, state machine, protokol serial |
 | `vision/` | Pengolahan citra: segmentasi tomat dan ekstraksi fitur |
-| `ml/` | Sistem cerdas: aturan rubrik, pelatihan, evaluasi, prediksi |
+| `ml/` | Sistem cerdas: aturan rubrik, training ResNeXt-101, evaluasi, API prediksi |
 | `controller/` | Program utama di PC: webcam, deteksi kehadiran tomat, vision, model, komunikasi serial |
 | `dashboard/` | Antarmuka web (prioritas terakhir) |
 | `data/` | `labels.csv` (di Git). Foto mentah di `data/raw/` TIDAK di-commit |
 | `models/` | Model hasil pelatihan (tidak di-commit secara default) |
-| `docs/` | Rubrik, protokol serial, alur alat, panduan kontribusi, catatan uji |
+| `docs/` | Rubrik, protokol serial, alur alat, panduan kontribusi, [panduan ML/API](docs/ML_RESNEXT101.md) |
 | `tests/` | Pengujian otomatis (pytest) |
 | `tools/` | Skrip bantu: `capture_dataset` (foto dataset), `extract_features_batch` (foto ke fitur), `send_grade` (uji protokol) |
 | `config.yaml` | Semua parameter (port, kamera, ambang, waktu). Jangan menulis angka di kode |

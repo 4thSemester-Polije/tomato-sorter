@@ -9,6 +9,9 @@ pyserial
 pyyaml
 pytest
 
-# Dashboard (aktifkan nanti):
-# fastapi
-# uvicorn
+# HTTP model inference API:
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
+python-multipart>=0.0.9
+Pillow>=10.0
+pillow-heif>=0.13

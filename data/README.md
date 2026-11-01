@@ -21,3 +21,4 @@ Kolom `_1` dan `_2` diisi masing-masing pelabel secara independen (tingkat 1-3 s
 ## Alur data
 
 `capture_dataset` -> `raw/` + `photos.csv` -> `extract_features_batch` -> `features.csv` -> digabung dengan `labels.csv` lewat `id_tomat` -> pelatihan model.
+

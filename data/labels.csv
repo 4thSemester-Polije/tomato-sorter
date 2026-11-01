@@ -1,1 +1,2 @@
-id_tomat,pelabel_1,kematangan_1,cacat_1,pelabel_2,kematangan_2,cacat_2,tingkat_kematangan,tingkat_cacat,grade,catatan
+id_tomat;pelabel_1;kematangan_1;cacat_1;pelabel_2;kematangan_2;cacat_2;tingkat_kematangan;tingkat_cacat;grade;catatan
+T0001;Iqbal ;;;;;;;;;

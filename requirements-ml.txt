@@ -1,0 +1,6 @@
+# Training runtime: Python 3.11 (for example, Google Colab).
+-r requirements.txt
+tensorflow==2.15.1
+keras==2.15.0
+image-classifiers==1.0.0
+openpyxl>=3.1
