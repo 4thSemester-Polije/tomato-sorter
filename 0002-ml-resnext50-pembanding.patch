@@ -1,0 +1,1550 @@
+diff --git a/docs/ML_RESNEXT101.md b/docs/ML_RESNEXT101.md
+index ff96f54..95f0e4f 100644
+--- a/docs/ML_RESNEXT101.md
++++ b/docs/ML_RESNEXT101.md
+@@ -1,4 +1,4 @@
+-# ResNeXt-101: data, training, evaluation, and API
++# ResNeXt-50 dan ResNeXt-101: data, training, evaluation, comparison, and API
+ 
+ ## Dataset inventory
+ 
+@@ -44,8 +44,11 @@ for all labelled primary photos.
+ 
+ ## Model and implementation
+ 
+-Two Keras transfer-learning models are trained using the ImageNet-pretrained
+-ResNeXt-101 backbone (`image-classifiers`, Keras/TensorFlow-Keras backend):
++Two Keras transfer-learning models per architecture are trained using an
++ImageNet-pretrained ResNeXt backbone (`image-classifiers`, Keras/TensorFlow-Keras
++backend). Supported architectures: `resnext50` and `resnext101`. Both use the
++same code path, split, hyperparameters, preprocessing, and metrics
++(`ml/metrics.py`), so the only difference is backbone depth:
+ 
+ 1. Ripeness: matang, setengah matang, mentah (levels 1, 2, 3).
+ 2. Visible defect: healthy, reject (levels 1, 3).
+@@ -79,21 +82,25 @@ Install the requirements in Google Colab (or another Python 3.11 runtime):
+ %pip install -r requirements-ml.txt
+ ```
+ 
+-Mount or upload the dataset, then run:
++Mount the dataset, then train one or both architectures. Both in one run
++(sequential, same seed and split):
+ 
+ ```python
+ !python -m ml.train \
+   --data-root "/content/drive/MyDrive/Datasets" \
+-  --models-dir models \
++  --models-dir "/content/drive/MyDrive/tomato-models" \
++  --architecture resnext50 resnext101 \
+   --seed 42
+ ```
+ 
+-The data-root directory must contain `Primer` and `Sekunder`. Training writes:
++Only one architecture (for example the missing ResNeXt-50): `--architecture resnext50`.
++Writing `--models-dir` to Google Drive keeps the models if the Colab runtime resets.
++The data-root directory must contain `Primer` and `Sekunder`. For each
++architecture `<arch>` (`resnext50` or `resnext101`) training writes:
+ 
+-- `models/ripeness_resnext101.keras`
+-- `models/defect_resnext101.keras`
+-- One JSON metadata file per model
+-- `models/evaluation_resnext101.json`
++- `models/ripeness_<arch>.keras` and `models/defect_<arch>.keras`
++- One JSON metadata file per model (split manifest, hyperparameters, parameter count, training time)
++- `models/evaluation_<arch>.json` (secondary + primary metrics, parameter count, latency, device)
+ 
+ Each model metadata file also stores the SHA-256-based train, validation, and
+ test split manifest so the ResNeXt-50 comparison can reuse the same image
+@@ -105,9 +112,14 @@ Primer results. The primary evaluation can be repeated after training:
+ ```python
+ !python -m ml.evaluate \
+   --data-root "/content/drive/MyDrive/Datasets" \
+-  --models-dir models
++  --models-dir models \
++  --architecture resnext101
+ ```
+ 
++`ml.evaluate` updates the primary and efficiency sections of
++`evaluation_<arch>.json` and keeps the stored secondary results. Use
++`--no-write` to only print.
++
+ If a previous run completed a model's training but stopped while loading its
+ checkpoint, rerun with `--reuse-existing-models`. It skips training for
+ existing `.keras` files and evaluates those checkpoints before continuing with
+@@ -116,12 +128,31 @@ same dataset, model configuration, and split seed. The option assumes any
+ existing checkpoint for that task is complete.
+ 
+ Evaluation metrics are accuracy, macro F1, per-class precision and recall,
+-confusion matrices, and classification reports. Review class-C recall and
+-mistakes from C to A in particular. To compare with ResNeXt-50, both runs must
+-use the same image manifests, seed, partitions, input size, preprocessing, and
+-evaluation set; compare macro F1, class-C recall, and inference latency. This
+-repository does not claim comparison results until both models have actually
+-been trained and evaluated.
++confusion matrices, and classification reports, computed by the same functions
++for every architecture. Review class-C recall and mistakes from C to A in
++particular.
++
++## Compare ResNeXt-50 and ResNeXt-101
++
++After both architectures have reports in the same models directory:
++
++```python
++!python -m ml.compare --models-dir models --output models/compare_resnext.md
++```
++
++The command prints a table (secondary and primary macro F1, grade accuracy,
++class-C recall, C-to-A errors, median/p95 latency, parameter count, device) and
++verifies the comparison is fair: identical SHA-256 split manifests, identical
++hyperparameters, the same primary evaluation set, and latency measured on the
++same device. Any mismatch is printed as `PERINGATAN` and the status becomes
++`TIDAK SETARA`; do not use such a table in the report.
++
++Latency is measured with a fixed synthetic image, 3 warm-up runs and 30 timed
++runs of both heads in sequence. Measure both architectures in the same Colab
++runtime type. If one model was trained on a different runtime, re-run
++`python -m ml.evaluate --architecture <arch>` for it in the current runtime
++before comparing. This repository does not claim comparison results until both
++models have actually been trained and evaluated.
+ 
+ ## HTTP API
+ 
+@@ -131,11 +162,14 @@ After training, start the API from the repository root:
+ python -m uvicorn ml.api:app --host 0.0.0.0 --port 8000
+ ```
+ 
+-`GET /health` reports whether model artifacts are present. Send a JPG, PNG, or
+-HEIC as multipart form field `file` to `POST /predict` (maximum 10 MiB):
++`GET /health` reports whether model artifacts are present for each architecture.
++Send a JPG, PNG, or HEIC as multipart form field `file` to `POST /predict`
++(maximum 10 MiB). The optional query parameter `architecture` (`resnext50` or
++`resnext101`) selects the model; without it the API uses the `TOMATO_ARCHITECTURE`
++environment variable, default `resnext101`:
+ 
+ ```powershell
+-curl.exe -X POST http://127.0.0.1:8000/predict -F "file=@tomat.jpg"
++curl.exe -X POST "http://127.0.0.1:8000/predict?architecture=resnext50" -F "file=@tomat.jpg"
+ ```
+ 
+ Example response:
+@@ -143,6 +177,7 @@ Example response:
+ ```json
+ {
+   "model": "ResNeXt101",
++  "architecture": "resnext101",
+   "input_size": [224, 224],
+   "ripeness": {
+     "class": "matang",
+@@ -182,8 +217,8 @@ created by this project, not files from untrusted sources.
+ flowchart LR
+     A[Inspect and deduplicate secondary JPGs] --> B[Stratified 70/15/15 split, seed 42]
+     B --> C[Resize 224x224 and ResNeXt preprocessing]
+-    C --> D1[Train Keras ResNeXt-101 ripeness head]
+-    C --> D2[Train Keras ResNeXt-101 defect head]
++    C --> D1[Train Keras ResNeXt-50/101 ripeness head]
++    C --> D2[Train Keras ResNeXt-50/101 defect head]
+     D1 --> E[Evaluate held-out secondary test sets]
+     D2 --> E
+     E --> F[Save two Keras models and metadata]
+@@ -192,4 +227,5 @@ flowchart LR
+     H --> I[Apply worst-level rubric and return A/B/C]
+     F --> J[Evaluate 108 independent labelled Primer photos]
+     J --> K[Report macro F1, precision/recall, confusion matrices]
++    K --> L[ml.compare: ResNeXt-50 vs 101 fairness check and table]
+ ```
+diff --git a/ml/api.py b/ml/api.py
+index 9933bb4..e7b82a2 100644
+--- a/ml/api.py
++++ b/ml/api.py
+@@ -1,4 +1,4 @@
+-"""HTTP API for the trained ResNeXt-101 tomato classifiers."""
++"""HTTP API for the trained ResNeXt (50 / 101) tomato classifiers."""
+ 
+ from __future__ import annotations
+ 
+@@ -10,40 +10,57 @@ from pathlib import Path
+ from typing import Any
+ 
+ import numpy as np
+-from fastapi import FastAPI, File, HTTPException, UploadFile
++from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+ from PIL import Image, UnidentifiedImageError
+ import pillow_heif
+ 
+ from ml.resnext import (
++    ARCHITECTURES,
++    DEFAULT_ARCHITECTURE,
+     DEFECT_LEVELS,
+     INPUT_SIZE,
+-    MODEL_NAME,
+     RIPENESS_LEVELS,
++    TASKS,
++    artifact_paths,
++    display_name,
+     get_preprocess_input,
+     load_trusted_model,
++    validate_architecture,
+ )
+ from ml.rubric import grade_from_levels
+ 
+ MAX_IMAGE_BYTES = 10 * 1024 * 1024
+ DEFAULT_MODELS_DIR = Path(os.environ.get("TOMATO_MODELS_DIR", "models"))
++ARCHITECTURE_PATTERN = "^(" + "|".join(sorted(ARCHITECTURES)) + ")$"
+ pillow_heif.register_heif_opener()
+ 
+ app = FastAPI(
+     title="Tomato Sorter ML API",
+-    version="1.0.0",
+-    description="ResNeXt-101 predictions for tomato ripeness, visible defects, and grade.",
++    version="1.1.0",
++    description="ResNeXt-50/101 predictions for tomato ripeness, visible defects, and grade.",
+ )
+ 
+ 
++def _default_architecture() -> str:
++    """Architecture used when a request does not pick one (env TOMATO_ARCHITECTURE)."""
++    return validate_architecture(os.environ.get("TOMATO_ARCHITECTURE", DEFAULT_ARCHITECTURE))
++
++
++def _required_files(models_dir: Path, architecture: str) -> list[Path]:
++    paths: list[Path] = []
++    for task in TASKS:
++        paths.extend(artifact_paths(models_dir, task, architecture))
++    return paths
++
++
+ @lru_cache(maxsize=4)
+-def _load_models(models_dir: str) -> tuple[Any, Any, dict[str, Any], dict[str, Any], Any]:
++def _load_models(
++    models_dir: str, architecture: str = DEFAULT_ARCHITECTURE
++) -> tuple[Any, Any, dict[str, Any], dict[str, Any], Any]:
+     directory = Path(models_dir)
+-    paths = (
+-        directory / "ripeness_resnext101.keras",
+-        directory / "defect_resnext101.keras",
+-        directory / "ripeness_resnext101.json",
+-        directory / "defect_resnext101.json",
+-    )
++    ripeness_files = artifact_paths(directory, "ripeness", architecture)
++    defect_files = artifact_paths(directory, "defect", architecture)
++    paths = (ripeness_files[0], defect_files[0], ripeness_files[1], defect_files[1])
+     missing = [str(path) for path in paths if not path.is_file()]
+     if missing:
+         raise FileNotFoundError(
+@@ -57,7 +74,7 @@ def _load_models(models_dir: str) -> tuple[Any, Any, dict[str, Any], dict[str, A
+     defect_metadata = json.loads(
+         paths[3].read_text(encoding="utf-8")
+     )
+-    preprocess_input = get_preprocess_input()
++    preprocess_input = get_preprocess_input(architecture)
+     return (
+         ripeness_model,
+         defect_model,
+@@ -85,7 +102,11 @@ def _class_prediction(
+     }
+ 
+ 
+-def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) -> dict[str, Any]:
++def predict_image(
++    image: Image.Image,
++    models_dir: Path = DEFAULT_MODELS_DIR,
++    architecture: str = DEFAULT_ARCHITECTURE,
++) -> dict[str, Any]:
+     """Run both classifiers and combine their levels using the project rubric."""
+     (
+         ripeness_model,
+@@ -93,7 +114,7 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) ->
+         ripeness_metadata,
+         defect_metadata,
+         preprocess_input,
+-    ) = _load_models(str(models_dir.resolve()))
++    ) = _load_models(str(models_dir.resolve()), architecture)
+     resized = image.convert("RGB").resize((INPUT_SIZE[1], INPUT_SIZE[0]))
+     pixels = np.asarray(resized, dtype=np.float32)
+     processed = preprocess_input(np.expand_dims(pixels, axis=0))
+@@ -111,7 +132,8 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) ->
+         DEFECT_LEVELS,
+     )
+     return {
+-        "model": MODEL_NAME,
++        "model": display_name(architecture),
++        "architecture": architecture,
+         "input_size": list(INPUT_SIZE),
+         "ripeness": ripeness,
+         "defect": defect,
+@@ -121,22 +143,37 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) ->
+ 
+ @app.get("/health")
+ def health() -> dict[str, Any]:
+-    required = (
+-        DEFAULT_MODELS_DIR / "ripeness_resnext101.keras",
+-        DEFAULT_MODELS_DIR / "defect_resnext101.keras",
+-        DEFAULT_MODELS_DIR / "ripeness_resnext101.json",
+-        DEFAULT_MODELS_DIR / "defect_resnext101.json",
+-    )
+-    missing = [path.name for path in required if not path.is_file()]
++    default = _default_architecture()
++    architectures: dict[str, Any] = {}
++    for architecture in ARCHITECTURES:
++        missing = [
++            path.name
++            for path in _required_files(DEFAULT_MODELS_DIR, architecture)
++            if not path.is_file()
++        ]
++        architectures[architecture] = {
++            "status": "ready" if not missing else "model_missing",
++            "missing_files": missing,
++        }
+     return {
+-        "status": "ready" if not missing else "model_missing",
+-        "model": MODEL_NAME,
+-        "missing_files": missing,
++        "status": architectures[default]["status"],
++        "model": display_name(default),
++        "architecture": default,
++        "missing_files": architectures[default]["missing_files"],
++        "architectures": architectures,
+     }
+ 
+ 
+ @app.post("/predict")
+-async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
++async def predict(
++    file: UploadFile = File(...),
++    architecture: str | None = Query(
++        default=None,
++        pattern=ARCHITECTURE_PATTERN,
++        description="resnext50 atau resnext101. Kosong = TOMATO_ARCHITECTURE (bawaan resnext101).",
++    ),
++) -> dict[str, Any]:
++    chosen = architecture or _default_architecture()
+     content = await file.read(MAX_IMAGE_BYTES + 1)
+     if len(content) > MAX_IMAGE_BYTES:
+         raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
+@@ -151,6 +188,6 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
+         ) from exc
+ 
+     try:
+-        return predict_image(decoded_image, DEFAULT_MODELS_DIR)
++        return predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
+     except FileNotFoundError as exc:
+         raise HTTPException(status_code=503, detail=str(exc)) from exc
+diff --git a/ml/compare.py b/ml/compare.py
+new file mode 100644
+index 0000000..820e45c
+--- /dev/null
++++ b/ml/compare.py
+@@ -0,0 +1,224 @@
++"""Bandingkan hasil ResNeXt-50 dan ResNeXt-101 dari file laporan di models/.
++
++Perbandingan hanya sah bila kedua model memakai partisi data, hyperparameter,
++ukuran input, set evaluasi primer, dan perangkat latensi yang sama. Fungsi ini
++memeriksa semuanya dan menandai hasil "TIDAK SETARA" bila ada yang berbeda.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++from pathlib import Path
++from typing import Any, Sequence
++
++from ml.resnext import ARCHITECTURES, TASKS, artifact_paths, report_path
++
++DEFAULT_PAIR = ("resnext50", "resnext101")
++# Hyperparameter bawaan versi training lama (sebelum metadata mencatatnya).
++LEGACY_HYPERPARAMETERS = {
++    "seed": 42,
++    "batch_size": 16,
++    "head_epochs": 8,
++    "fine_tune_epochs": 5,
++    "head_learning_rate": 1e-3,
++    "fine_tune_learning_rate": 1e-5,
++    "fine_tune_layers": 30,
++    "early_stopping_patience": 3,
++    "input_size": [224, 224],
++}
++
++
++def _read_json(path: Path) -> dict[str, Any]:
++    if not path.is_file():
++        raise FileNotFoundError(f"File laporan tidak ditemukan: {path}")
++    return json.loads(path.read_text(encoding="utf-8"))
++
++
++def _split_fingerprint(metadata: dict[str, Any]) -> dict[str, list[str]]:
++    manifest = metadata["split_manifest"]
++    return {
++        part: sorted(entry["sha256"] for entry in manifest[part])
++        for part in ("train", "validation", "test")
++    }
++
++
++def _hyperparameters(metadata: dict[str, Any]) -> tuple[dict[str, Any], bool]:
++    recorded = metadata.get("hyperparameters")
++    if recorded is not None:
++        return recorded, True
++    legacy = dict(LEGACY_HYPERPARAMETERS)
++    legacy["seed"] = metadata.get("seed", legacy["seed"])
++    return legacy, False
++
++
++def check_comparability(
++    architectures: Sequence[str],
++    reports: dict[str, dict[str, Any]],
++    metadata: dict[str, dict[str, dict[str, Any]]],
++) -> list[str]:
++    """Return a list of problems; an empty list means the comparison is fair."""
++    problems: list[str] = []
++    first = architectures[0]
++    for other in architectures[1:]:
++        for task in TASKS:
++            if _split_fingerprint(metadata[first][task]) != _split_fingerprint(
++                metadata[other][task]
++            ):
++                problems.append(
++                    f"Partisi train/val/test tugas '{task}' berbeda antara {first} dan {other}."
++                )
++            base_params, _ = _hyperparameters(metadata[first][task])
++            other_params, _ = _hyperparameters(metadata[other][task])
++            if base_params != other_params:
++                diff = sorted(
++                    key
++                    for key in set(base_params) | set(other_params)
++                    if base_params.get(key) != other_params.get(key)
++                )
++                problems.append(
++                    f"Hyperparameter tugas '{task}' berbeda ({', '.join(diff)}) "
++                    f"antara {first} dan {other}."
++                )
++        base_primary = reports[first].get("primary_independent_test", {})
++        other_primary = reports[other].get("primary_independent_test", {})
++        if base_primary.get("independent_primary_test_images") != other_primary.get(
++            "independent_primary_test_images"
++        ):
++            problems.append("Jumlah foto evaluasi primer berbeda.")
++        devices = {
++            reports[name].get("efficiency", {}).get("device") for name in (first, other)
++        }
++        if None in devices:
++            problems.append(
++                "Latensi/perangkat belum tercatat untuk salah satu model. "
++                "Jalankan: python -m ml.evaluate --architecture <nama> di runtime yang sama."
++            )
++        elif len(devices) > 1:
++            problems.append(
++                f"Latensi diukur di perangkat berbeda ({', '.join(sorted(devices))}); "
++                "latensi tidak sebanding."
++            )
++    return problems
++
++
++def _row(architecture: str, report: dict[str, Any]) -> dict[str, Any]:
++    secondary = report["secondary"]
++    primary = report["primary_independent_test"]
++    grade = primary["grade"]
++    confusion = grade["confusion_matrix"]
++    efficiency = report.get("efficiency", {})
++    latency = efficiency.get("latency_ms", {})
++    return {
++        "architecture": architecture,
++        "model": ARCHITECTURES[architecture],
++        "secondary_ripeness_accuracy": secondary["ripeness"]["accuracy"],
++        "secondary_ripeness_macro_f1": secondary["ripeness"]["macro_f1"],
++        "secondary_defect_accuracy": secondary["defect"]["accuracy"],
++        "secondary_defect_macro_f1": secondary["defect"]["macro_f1"],
++        "primary_ripeness_macro_f1": primary["heads"]["ripeness"]["macro_f1"],
++        "primary_defect_macro_f1": primary["heads"]["defect"]["macro_f1"],
++        "primary_grade_accuracy": grade["accuracy"],
++        "primary_grade_macro_f1": grade["macro_f1"],
++        "primary_grade_recall_c": grade["recall_per_class"]["C"],
++        "primary_grade_c_to_a_errors": confusion[2][0],
++        "latency_median_ms": latency.get("median"),
++        "latency_p95_ms": latency.get("p95"),
++        "parameters_total": efficiency.get("parameters_total"),
++        "device": efficiency.get("device"),
++    }
++
++
++def compare(
++    models_dir: str | Path = "models",
++    architectures: Sequence[str] = DEFAULT_PAIR,
++) -> dict[str, Any]:
++    if len(architectures) < 2:
++        raise ValueError("Berikan minimal dua arsitektur untuk dibandingkan.")
++    directory = Path(models_dir)
++    reports = {name: _read_json(report_path(directory, name)) for name in architectures}
++    metadata = {
++        name: {
++            task: _read_json(artifact_paths(directory, task, name)[1]) for task in TASKS
++        }
++        for name in architectures
++    }
++    problems = check_comparability(architectures, reports, metadata)
++    notes = [
++        f"Metadata {name}/{task} tidak mencatat hyperparameter (training versi lama); "
++        "dipakai nilai bawaan lama untuk pemeriksaan."
++        for name in architectures
++        for task in TASKS
++        if not _hyperparameters(metadata[name][task])[1]
++    ]
++    return {
++        "comparable": not problems,
++        "problems": problems,
++        "notes": notes,
++        "rows": [_row(name, reports[name]) for name in architectures],
++    }
++
++
++def _fmt(value: Any, spec: str = ".4f") -> str:
++    return "-" if value is None else format(value, spec)
++
++
++def render_markdown(result: dict[str, Any]) -> str:
++    rows = result["rows"]
++    header = "| Metrik | " + " | ".join(row["model"] for row in rows) + " |"
++    divider = "|---|" + "---|" * len(rows)
++    lines = [
++        "# Perbandingan ResNeXt",
++        "",
++        "Status: **SETARA**" if result["comparable"] else "Status: **TIDAK SETARA**",
++    ]
++    for problem in result["problems"]:
++        lines.append(f"- PERINGATAN: {problem}")
++    for note in result["notes"]:
++        lines.append(f"- Catatan: {note}")
++    lines += ["", header, divider]
++    metrics = (
++        ("Sekunder - kematangan: akurasi", "secondary_ripeness_accuracy", ".4f"),
++        ("Sekunder - kematangan: macro F1", "secondary_ripeness_macro_f1", ".4f"),
++        ("Sekunder - cacat: akurasi", "secondary_defect_accuracy", ".4f"),
++        ("Sekunder - cacat: macro F1", "secondary_defect_macro_f1", ".4f"),
++        ("Primer - kematangan: macro F1", "primary_ripeness_macro_f1", ".4f"),
++        ("Primer - cacat: macro F1", "primary_defect_macro_f1", ".4f"),
++        ("Primer - grade A/B/C: akurasi", "primary_grade_accuracy", ".4f"),
++        ("Primer - grade A/B/C: macro F1", "primary_grade_macro_f1", ".4f"),
++        ("Primer - recall kelas C", "primary_grade_recall_c", ".4f"),
++        ("Primer - salah prediksi C menjadi A", "primary_grade_c_to_a_errors", "d"),
++        ("Latensi median per tomat (ms, 2 model)", "latency_median_ms", ".1f"),
++        ("Latensi p95 per tomat (ms, 2 model)", "latency_p95_ms", ".1f"),
++        ("Jumlah parameter (2 model)", "parameters_total", ",d"),
++        ("Perangkat", "device", "s"),
++    )
++    for label, key, spec in metrics:
++        cells = [_fmt(row[key], spec) for row in rows]
++        lines.append(f"| {label} | " + " | ".join(cells) + " |")
++    return "\n".join(lines) + "\n"
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--models-dir", type=Path, default=Path("models"))
++    parser.add_argument(
++        "--architecture",
++        nargs="+",
++        choices=sorted(ARCHITECTURES),
++        default=list(DEFAULT_PAIR),
++    )
++    parser.add_argument("--output", type=Path, help="Simpan tabel Markdown ke file ini.")
++    args = parser.parse_args()
++    result = compare(args.models_dir, args.architecture)
++    markdown = render_markdown(result)
++    print(markdown)
++    if args.output:
++        args.output.write_text(markdown, encoding="utf-8")
++        args.output.with_suffix(".json").write_text(
++            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
++        )
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ml/evaluate.py b/ml/evaluate.py
+index eeab6e2..433d41b 100644
+--- a/ml/evaluate.py
++++ b/ml/evaluate.py
+@@ -1,4 +1,4 @@
+-"""Evaluate saved ResNeXt-101 models on the independent Primer photo set."""
++"""Evaluate saved ResNeXt models on the independent Primer photo set."""
+ 
+ from __future__ import annotations
+ 
+@@ -7,25 +7,68 @@ import json
+ from pathlib import Path
+ from typing import Any
+ 
+-from ml.resnext import load_trusted_model
+-from ml.train import _evaluate_primary
++from ml.resnext import (
++    ARCHITECTURES,
++    DEFAULT_ARCHITECTURE,
++    artifact_paths,
++    load_trusted_model,
++    report_path,
++    validate_architecture,
++)
++from ml.train import _evaluate_primary, measure_efficiency
+ 
+ 
+-def evaluate(data_root: str | Path, models_dir: str | Path = "models") -> dict[str, Any]:
++def evaluate(
++    data_root: str | Path,
++    models_dir: str | Path = "models",
++    architecture: str = DEFAULT_ARCHITECTURE,
++) -> dict[str, Any]:
++    validate_architecture(architecture)
+     root = Path(data_root)
+     directory = Path(models_dir)
+-    ripeness_model = load_trusted_model(directory / "ripeness_resnext101.keras")
+-    defect_model = load_trusted_model(directory / "defect_resnext101.keras")
+-    return _evaluate_primary(root, ripeness_model, defect_model, directory)
++    ripeness_model = load_trusted_model(artifact_paths(directory, "ripeness", architecture)[0])
++    defect_model = load_trusted_model(artifact_paths(directory, "defect", architecture)[0])
++    return {
++        "primary_independent_test": _evaluate_primary(
++            root, ripeness_model, defect_model, directory, architecture
++        ),
++        "efficiency": measure_efficiency(ripeness_model, defect_model, architecture),
++    }
++
++
++def update_report(
++    models_dir: str | Path, architecture: str, fresh: dict[str, Any]
++) -> Path:
++    """Merge fresh primary/efficiency results into evaluation_<arch>.json, keeping 'secondary'."""
++    path = report_path(models_dir, architecture)
++    report: dict[str, Any] = {}
++    if path.is_file():
++        report = json.loads(path.read_text(encoding="utf-8"))
++    report.update(fresh)
++    path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
++    return path
+ 
+ 
+ def main() -> None:
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--data-root", required=True, type=Path)
+     parser.add_argument("--models-dir", type=Path, default=Path("models"))
++    parser.add_argument(
++        "--architecture",
++        choices=sorted(ARCHITECTURES),
++        default=DEFAULT_ARCHITECTURE,
++    )
++    parser.add_argument(
++        "--no-write",
++        action="store_true",
++        help="Hanya cetak hasil; jangan memperbarui evaluation_<arsitektur>.json.",
++    )
+     args = parser.parse_args()
+-    report = evaluate(args.data_root, args.models_dir)
+-    print(json.dumps(report, indent=2, ensure_ascii=False))
++    fresh = evaluate(args.data_root, args.models_dir, args.architecture)
++    if not args.no_write:
++        path = update_report(args.models_dir, args.architecture, fresh)
++        print(f"# Laporan diperbarui: {path}")
++    print(json.dumps(fresh, indent=2, ensure_ascii=False))
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/ml/metrics.py b/ml/metrics.py
+new file mode 100644
+index 0000000..ee82d74
+--- /dev/null
++++ b/ml/metrics.py
+@@ -0,0 +1,123 @@
++"""Metric helpers shared by training, evaluation, and model comparison.
++
++Semua arsitektur (ResNeXt-50 dan ResNeXt-101) memakai fungsi yang sama di sini
++sehingga angka keduanya dihitung dengan cara yang identik.
++"""
++
++from __future__ import annotations
++
++import time
++from typing import Any, Iterable, Sequence
++
++import numpy as np
++from sklearn.metrics import (
++    accuracy_score,
++    classification_report,
++    confusion_matrix,
++    f1_score,
++    precision_recall_fscore_support,
++)
++
++GRADE_CLASSES = ("A", "B", "C")
++
++
++def classification_metrics(
++    expected: Sequence[int],
++    predicted: Sequence[int],
++    class_names: Sequence[str],
++) -> dict[str, Any]:
++    labels = list(range(len(class_names)))
++    precision, recall, f1, _ = precision_recall_fscore_support(
++        expected, predicted, labels=labels, zero_division=0
++    )
++    return {
++        "accuracy": float(accuracy_score(expected, predicted)),
++        "macro_f1": float(f1_score(expected, predicted, average="macro")),
++        "classes": list(class_names),
++        "precision_per_class": {
++            name: float(precision[index]) for index, name in enumerate(class_names)
++        },
++        "recall_per_class": {
++            name: float(recall[index]) for index, name in enumerate(class_names)
++        },
++        "f1_per_class": {
++            name: float(f1[index]) for index, name in enumerate(class_names)
++        },
++        "confusion_matrix": confusion_matrix(
++            expected, predicted, labels=labels
++        ).tolist(),
++        "classification_report": classification_report(
++            expected,
++            predicted,
++            labels=labels,
++            target_names=list(class_names),
++            output_dict=True,
++            zero_division=0,
++        ),
++    }
++
++
++def grade_metrics(expected: Sequence[str], predicted: Sequence[str]) -> dict[str, Any]:
++    true_indices = [GRADE_CLASSES.index(value) for value in expected]
++    predicted_indices = [GRADE_CLASSES.index(value) for value in predicted]
++    return classification_metrics(true_indices, predicted_indices, GRADE_CLASSES)
++
++
++def summarize_latency(durations_ms: Iterable[float]) -> dict[str, float]:
++    values = np.asarray(list(durations_ms), dtype=np.float64)
++    if values.size == 0:
++        raise ValueError("At least one latency measurement is required.")
++    return {
++        "runs": int(values.size),
++        "mean": float(values.mean()),
++        "median": float(np.median(values)),
++        "p95": float(np.percentile(values, 95)),
++        "min": float(values.min()),
++        "max": float(values.max()),
++    }
++
++
++def benchmark_latency(
++    models: Sequence[Any],
++    preprocess_input: Any,
++    input_size: tuple[int, int],
++    runs: int = 30,
++    warmup: int = 3,
++    seed: int = 0,
++) -> dict[str, float]:
++    """Time one full prediction (all models in sequence) on a fixed synthetic image, in ms."""
++    if runs < 1 or warmup < 0:
++        raise ValueError("runs must be >= 1 and warmup >= 0.")
++    rng = np.random.default_rng(seed)
++    pixels = rng.uniform(0, 255, size=(1, *input_size, 3)).astype(np.float32)
++    batch = preprocess_input(pixels)
++    durations: list[float] = []
++    for attempt in range(warmup + runs):
++        start = time.perf_counter()
++        for model in models:
++            model.predict(batch, verbose=0)
++        elapsed_ms = (time.perf_counter() - start) * 1000.0
++        if attempt >= warmup:
++            durations.append(elapsed_ms)
++    return summarize_latency(durations)
++
++
++def count_parameters(models: Sequence[Any]) -> int:
++    return int(sum(model.count_params() for model in models))
++
++
++def describe_device() -> str:
++    """Return 'GPU: <name>' or 'CPU' for the runtime TensorFlow will use."""
++    import tensorflow as tf
++
++    gpus = tf.config.list_physical_devices("GPU")
++    if not gpus:
++        return "CPU"
++    names = []
++    for gpu in gpus:
++        try:
++            details = tf.config.experimental.get_device_details(gpu)
++            names.append(str(details.get("device_name", gpu.name)))
++        except Exception:  # noqa: BLE001 - device details are best-effort metadata
++            names.append(gpu.name)
++    return "GPU: " + ", ".join(names)
+diff --git a/ml/resnext.py b/ml/resnext.py
+index 80b2e42..18eff9d 100644
+--- a/ml/resnext.py
++++ b/ml/resnext.py
+@@ -1,4 +1,4 @@
+-"""Keras ResNeXt-101 model and image preprocessing helpers."""
++"""Keras ResNeXt models (50 and 101), artifact naming, and preprocessing helpers."""
+ 
+ from __future__ import annotations
+ 
+@@ -6,14 +6,48 @@ from pathlib import Path
+ from typing import Any
+ 
+ INPUT_SIZE = (224, 224)
+-MODEL_NAME = "ResNeXt101"
++ARCHITECTURES = {
++    "resnext50": "ResNeXt50",
++    "resnext101": "ResNeXt101",
++}
++DEFAULT_ARCHITECTURE = "resnext101"
++TASKS = ("ripeness", "defect")
++# Jumlah layer backbone terakhir yang dibuka saat fine-tuning. Sama untuk semua
++# arsitektur agar perbandingan adil.
++FINE_TUNE_LAYERS = 30
+ RIPENESS_CLASSES = ("matang", "setengah_matang", "mentah")
+ DEFECT_CLASSES = ("healthy", "reject")
+ RIPENESS_LEVELS = {"matang": 1, "setengah_matang": 2, "mentah": 3}
+ DEFECT_LEVELS = {"healthy": 1, "reject": 3}
+ 
+ 
+-def _keras_dependencies() -> tuple[Any, Any, Any]:
++def validate_architecture(architecture: str) -> str:
++    if architecture not in ARCHITECTURES:
++        raise ValueError(
++            f"Unknown architecture: {architecture!r}. Choose one of {sorted(ARCHITECTURES)}."
++        )
++    return architecture
++
++
++def display_name(architecture: str) -> str:
++    return ARCHITECTURES[validate_architecture(architecture)]
++
++
++def artifact_paths(models_dir: str | Path, task: str, architecture: str) -> tuple[Path, Path]:
++    """Return (.keras path, .json metadata path) for one task and architecture."""
++    if task not in TASKS:
++        raise ValueError(f"Unknown task: {task!r}")
++    stem = f"{task}_{validate_architecture(architecture)}"
++    directory = Path(models_dir)
++    return directory / f"{stem}.keras", directory / f"{stem}.json"
++
++
++def report_path(models_dir: str | Path, architecture: str) -> Path:
++    return Path(models_dir) / f"evaluation_{validate_architecture(architecture)}.json"
++
++
++def _keras_dependencies(architecture: str) -> tuple[Any, Any, Any]:
++    validate_architecture(architecture)
+     try:
+         import tensorflow as tf
+         from classification_models.tfkeras import Classifiers
+@@ -23,19 +57,21 @@ def _keras_dependencies() -> tuple[Any, Any, Any]:
+             "Install the dependencies from requirements-ml.txt."
+         ) from exc
+ 
+-    model_factory, preprocess_input = Classifiers.get("resnext101")
++    model_factory, preprocess_input = Classifiers.get(architecture)
+     return tf, model_factory, preprocess_input
+ 
+ 
+-def get_preprocess_input() -> Any:
++def get_preprocess_input(architecture: str = DEFAULT_ARCHITECTURE) -> Any:
+     """Return the ImageNet preprocessing function for the pretrained backbone."""
+-    _, _, preprocess_input = _keras_dependencies()
++    _, _, preprocess_input = _keras_dependencies(architecture)
+     return preprocess_input
+ 
+ 
+ def load_trusted_model(path: str | Path) -> Any:
+     """Load a project-generated Keras artifact with its trusted Lambda layers."""
+-    tf, _, _ = _keras_dependencies()
++    # Memuat dependensi lengkap (termasuk image-classifiers) seperti sebelumnya,
++    # karena backbone ResNeXt berisi layer Lambda dari pustaka tersebut.
++    tf, _, _ = _keras_dependencies(DEFAULT_ARCHITECTURE)
+     return tf.keras.models.load_model(path, safe_mode=False)
+ 
+ 
+@@ -43,14 +79,16 @@ def create_model(
+     task: str,
+     num_classes: int,
+     input_size: tuple[int, int] = INPUT_SIZE,
++    *,
++    architecture: str = DEFAULT_ARCHITECTURE,
+ ) -> tuple[Any, Any, Any]:
+     """Create a transfer-learning model and return it with its backbone and preprocessor."""
+-    if task not in {"ripeness", "defect"}:
++    if task not in TASKS:
+         raise ValueError(f"Unknown task: {task!r}")
+     if num_classes < 2:
+         raise ValueError("A classifier must have at least two classes.")
+ 
+-    tf, model_factory, preprocess_input = _keras_dependencies()
++    tf, model_factory, preprocess_input = _keras_dependencies(architecture)
+     backbone = model_factory(
+         input_shape=(*input_size, 3),
+         include_top=False,
+@@ -71,10 +109,10 @@ def create_model(
+     outputs = tf.keras.layers.Dense(
+         num_classes, activation="softmax", name="probabilities"
+     )(features)
+-    model = tf.keras.Model(inputs, outputs, name=f"resnext101_{task}")
++    model = tf.keras.Model(inputs, outputs, name=f"{architecture}_{task}")
+     return model, backbone, preprocess_input
+ 
+ 
+-def preprocess_image(image: Any) -> Any:
+-    """Apply the ImageNet preprocessing expected by the ResNeXt-101 weights."""
+-    return get_preprocess_input()(image)
++def preprocess_image(image: Any, architecture: str = DEFAULT_ARCHITECTURE) -> Any:
++    """Apply the ImageNet preprocessing expected by the ResNeXt weights."""
++    return get_preprocess_input(architecture)(image)
+diff --git a/ml/train.py b/ml/train.py
+index c7ac1b7..e8f7539 100644
+--- a/ml/train.py
++++ b/ml/train.py
+@@ -1,4 +1,4 @@
+-"""Train and evaluate separate ResNeXt-101 ripeness and defect classifiers."""
++"""Train and evaluate separate ripeness and defect classifiers (ResNeXt-50 or ResNeXt-101)."""
+ 
+ from __future__ import annotations
+ 
+@@ -7,30 +7,49 @@ import csv
+ import hashlib
+ import json
+ import logging
++import time
+ from collections import Counter
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Any, Sequence
+ 
+ import numpy as np
+-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+ from sklearn.model_selection import train_test_split
+ 
++from ml.metrics import (
++    benchmark_latency,
++    classification_metrics,
++    count_parameters,
++    describe_device,
++    grade_metrics,
++)
+ from ml.resnext import (
++    ARCHITECTURES,
++    DEFAULT_ARCHITECTURE,
+     DEFECT_CLASSES,
+     DEFECT_LEVELS,
++    FINE_TUNE_LAYERS,
+     INPUT_SIZE,
+-    MODEL_NAME,
+     RIPENESS_CLASSES,
+     RIPENESS_LEVELS,
++    artifact_paths,
+     create_model,
++    display_name,
+     get_preprocess_input,
+     load_trusted_model,
++    report_path,
++    validate_architecture,
+ )
+ from ml.rubric import grade_from_levels
+ 
+ logger = logging.getLogger(__name__)
+ 
++# Hyperparameter tetap untuk semua arsitektur. Nilai ini dicatat di metadata
++# model agar ml.compare dapat memastikan perbandingan ResNeXt-50 vs 101 adil.
++HEAD_LEARNING_RATE = 1e-3
++FINE_TUNE_LEARNING_RATE = 1e-5
++EARLY_STOPPING_PATIENCE = 3
++
+ 
+ @dataclass(frozen=True)
+ class Sample:
+@@ -113,6 +132,7 @@ def _load_tensorflow_dataset(
+     preprocess_input: Any,
+     batch_size: int,
+     training: bool,
++    seed: int = 42,
+ ) -> Any:
+     import tensorflow as tf
+ 
+@@ -135,50 +155,12 @@ def _load_tensorflow_dataset(
+     if training:
+         dataset = dataset.shuffle(
+             len(samples),
+-            seed=42,
++            seed=seed,
+             reshuffle_each_iteration=True,
+         )
+     return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+ 
+ 
+-def _classification_metrics(
+-    expected: Sequence[int],
+-    predicted: Sequence[int],
+-    class_names: Sequence[str],
+-) -> dict[str, Any]:
+-    from sklearn.metrics import precision_recall_fscore_support
+-
+-    labels = list(range(len(class_names)))
+-    precision, recall, f1, _ = precision_recall_fscore_support(
+-        expected, predicted, labels=labels, zero_division=0
+-    )
+-    return {
+-        "accuracy": float(accuracy_score(expected, predicted)),
+-        "macro_f1": float(f1_score(expected, predicted, average="macro")),
+-        "classes": list(class_names),
+-        "precision_per_class": {
+-            name: float(precision[index]) for index, name in enumerate(class_names)
+-        },
+-        "recall_per_class": {
+-            name: float(recall[index]) for index, name in enumerate(class_names)
+-        },
+-        "f1_per_class": {
+-            name: float(f1[index]) for index, name in enumerate(class_names)
+-        },
+-        "confusion_matrix": confusion_matrix(
+-            expected, predicted, labels=labels
+-        ).tolist(),
+-        "classification_report": classification_report(
+-            expected,
+-            predicted,
+-            labels=labels,
+-            target_names=list(class_names),
+-            output_dict=True,
+-            zero_division=0,
+-        ),
+-    }
+-
+-
+ def _metric_report(
+     model: Any,
+     dataset: Any,
+@@ -186,7 +168,7 @@ def _metric_report(
+ ) -> dict[str, Any]:
+     expected = np.concatenate([labels.numpy() for _, labels in dataset])
+     predicted = np.argmax(model.predict(dataset, verbose=0), axis=1)
+-    return _classification_metrics(expected, predicted, class_names)
++    return classification_metrics(expected, predicted, class_names)
+ 
+ 
+ def _train_task(
+@@ -200,9 +182,13 @@ def _train_task(
+     head_epochs: int,
+     fine_tune_epochs: int,
+     reuse_existing: bool = False,
++    architecture: str = DEFAULT_ARCHITECTURE,
+ ) -> tuple[Any, dict[str, Any]]:
+     import tensorflow as tf
+ 
++    validate_architecture(architecture)
++    # Seed global (Python, NumPy, TensorFlow) agar tiap arsitektur mulai dari kondisi acak yang sama.
++    tf.keras.utils.set_random_seed(seed)
+     train_samples, validation_samples, test_samples = _split_samples(samples, seed)
+     class_to_index = {name: index for index, name in enumerate(class_names)}
+     output_path.parent.mkdir(parents=True, exist_ok=True)
+@@ -211,30 +197,36 @@ def _train_task(
+         logger.info("Reusing existing model checkpoint: %s", output_path)
+         model = load_trusted_model(output_path)
+         backbone = None
+-        preprocess_input = get_preprocess_input()
++        preprocess_input = get_preprocess_input(architecture)
+         history: dict[str, list[float]] = {}
+     else:
+-        model, backbone, preprocess_input = create_model(task, len(class_names))
++        model, backbone, preprocess_input = create_model(
++            task, len(class_names), architecture=architecture
++        )
+         model.compile(
+-            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
++            optimizer=tf.keras.optimizers.Adam(learning_rate=HEAD_LEARNING_RATE),
+             loss="sparse_categorical_crossentropy",
+             metrics=["accuracy"],
+         )
+         history = {}
+     train_data = _load_tensorflow_dataset(
+-        train_samples, class_to_index, preprocess_input, batch_size, True
++        train_samples, class_to_index, preprocess_input, batch_size, True, seed
+     )
+     validation_data = _load_tensorflow_dataset(
+-        validation_samples, class_to_index, preprocess_input, batch_size, False
++        validation_samples, class_to_index, preprocess_input, batch_size, False, seed
+     )
+     test_data = _load_tensorflow_dataset(
+-        test_samples, class_to_index, preprocess_input, batch_size, False
++        test_samples, class_to_index, preprocess_input, batch_size, False, seed
+     )
+ 
++    training_seconds: float | None = None
+     if not checkpoint_reused:
++        training_started = time.perf_counter()
+         callbacks = [
+             tf.keras.callbacks.EarlyStopping(
+-                monitor="val_loss", patience=3, restore_best_weights=True
++                monitor="val_loss",
++                patience=EARLY_STOPPING_PATIENCE,
++                restore_best_weights=True,
+             ),
+             tf.keras.callbacks.ModelCheckpoint(
+                 filepath=str(output_path),
+@@ -254,13 +246,13 @@ def _train_task(
+         )
+         if fine_tune_epochs > 0:
+             backbone.trainable = True
+-            for layer in backbone.layers[:-30]:
++            for layer in backbone.layers[:-FINE_TUNE_LAYERS]:
+                 layer.trainable = False
+             for layer in backbone.layers:
+                 if isinstance(layer, tf.keras.layers.BatchNormalization):
+                     layer.trainable = False
+             model.compile(
+-                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
++                optimizer=tf.keras.optimizers.Adam(learning_rate=FINE_TUNE_LEARNING_RATE),
+                 loss="sparse_categorical_crossentropy",
+                 metrics=["accuracy"],
+             )
+@@ -277,15 +269,30 @@ def _train_task(
+                     for key, values in fine_tune_history.history.items()
+                 }
+             )
++        training_seconds = time.perf_counter() - training_started
+ 
+     metadata = {
+-        "model": MODEL_NAME,
++        "model": display_name(architecture),
++        "architecture": architecture,
+         "task": task,
+         "input_size": list(INPUT_SIZE),
+         "class_names": list(class_names),
+         "class_levels": class_levels,
+         "pretrained_weights": "ImageNet",
+         "seed": seed,
++        "hyperparameters": {
++            "seed": seed,
++            "batch_size": batch_size,
++            "head_epochs": head_epochs,
++            "fine_tune_epochs": fine_tune_epochs,
++            "head_learning_rate": HEAD_LEARNING_RATE,
++            "fine_tune_learning_rate": FINE_TUNE_LEARNING_RATE,
++            "fine_tune_layers": FINE_TUNE_LAYERS,
++            "early_stopping_patience": EARLY_STOPPING_PATIENCE,
++            "input_size": list(INPUT_SIZE),
++        },
++        "parameters": count_parameters([model]),
++        "training_seconds": training_seconds,
+         "split_percentages": {"train": 70, "validation": 15, "test": 15},
+         "unique_images": {
+             "total": len(samples),
+@@ -381,16 +388,17 @@ def _evaluate_primary(
+     ripeness_model: Any,
+     defect_model: Any,
+     models_dir: Path,
++    architecture: str = DEFAULT_ARCHITECTURE,
+ ) -> dict[str, Any]:
+     from PIL import Image
+ 
+     ripeness_metadata = json.loads(
+-        (models_dir / "ripeness_resnext101.json").read_text(encoding="utf-8")
++        artifact_paths(models_dir, "ripeness", architecture)[1].read_text(encoding="utf-8")
+     )
+     defect_metadata = json.loads(
+-        (models_dir / "defect_resnext101.json").read_text(encoding="utf-8")
++        artifact_paths(models_dir, "defect", architecture)[1].read_text(encoding="utf-8")
+     )
+-    preprocess_input = get_preprocess_input()
++    preprocess_input = get_preprocess_input(architecture)
+ 
+     expected_grades: list[str] = []
+     predicted_grades: list[str] = []
+@@ -426,13 +434,13 @@ def _evaluate_primary(
+     )
+     return {
+         "independent_primary_test_images": len(expected_grades),
+-        "grade": _grade_metrics(expected_grades, predicted_grades),
++        "grade": grade_metrics(expected_grades, predicted_grades),
+         "heads": {
+-            "ripeness": _classification_metrics(
++            "ripeness": classification_metrics(
+                 ripeness_true, ripeness_predicted, RIPENESS_CLASSES
+             ),
+             "defect": {
+-                **_classification_metrics(
++                **classification_metrics(
+                     defect_true, defect_predicted, DEFECT_CLASSES
+                 ),
+                 "evaluated_images_with_binary_ground_truth": len(defect_true),
+@@ -442,13 +450,6 @@ def _evaluate_primary(
+     }
+ 
+ 
+-def _grade_metrics(expected: Sequence[str], predicted: Sequence[str]) -> dict[str, Any]:
+-    class_names = ("A", "B", "C")
+-    true_indices = [class_names.index(value) for value in expected]
+-    predicted_indices = [class_names.index(value) for value in predicted]
+-    return _classification_metrics(true_indices, predicted_indices, class_names)
+-
+-
+ def train(
+     data_root: str | Path,
+     models_dir: str | Path = "models",
+@@ -457,8 +458,10 @@ def train(
+     head_epochs: int = 8,
+     fine_tune_epochs: int = 5,
+     reuse_existing: bool = False,
++    architecture: str = DEFAULT_ARCHITECTURE,
+ ) -> dict[str, Any]:
+     """Train both heads and evaluate on secondary holdouts and primary photos."""
++    validate_architecture(architecture)
+     if batch_size < 1:
+         raise ValueError("batch_size must be greater than zero.")
+     if head_epochs < 1:
+@@ -487,36 +490,36 @@ def train(
+         ripeness_samples,
+         RIPENESS_CLASSES,
+         RIPENESS_LEVELS,
+-        output_directory / "ripeness_resnext101.keras",
++        artifact_paths(output_directory, "ripeness", architecture)[0],
+         seed,
+         batch_size,
+         head_epochs,
+         fine_tune_epochs,
+         reuse_existing,
++        architecture,
+     )
+     defect_model, defect_metadata = _train_task(
+         "defect",
+         defect_samples,
+         DEFECT_CLASSES,
+         DEFECT_LEVELS,
+-        output_directory / "defect_resnext101.keras",
++        artifact_paths(output_directory, "defect", architecture)[0],
+         seed,
+         batch_size,
+         head_epochs,
+         fine_tune_epochs,
+         reuse_existing,
++        architecture,
+     )
+ 
+-    for filename, metadata in (
+-        ("ripeness_resnext101.json", ripeness_metadata),
+-        ("defect_resnext101.json", defect_metadata),
+-    ):
+-        (output_directory / filename).write_text(
++    for task, metadata in (("ripeness", ripeness_metadata), ("defect", defect_metadata)):
++        artifact_paths(output_directory, task, architecture)[1].write_text(
+             json.dumps(metadata, indent=2, ensure_ascii=False),
+             encoding="utf-8",
+         )
+     report = {
+-        "model": MODEL_NAME,
++        "model": display_name(architecture),
++        "architecture": architecture,
+         "input_size": list(INPUT_SIZE),
+         "seed": seed,
+         "secondary": {
+@@ -524,20 +527,43 @@ def train(
+             "defect": defect_metadata["test_metrics"],
+         },
+         "primary_independent_test": _evaluate_primary(
+-            root, ripeness_model, defect_model, output_directory
++            root, ripeness_model, defect_model, output_directory, architecture
+         ),
++        "efficiency": measure_efficiency(ripeness_model, defect_model, architecture),
+     }
+-    (output_directory / "evaluation_resnext101.json").write_text(
++    report_path(output_directory, architecture).write_text(
+         json.dumps(report, indent=2, ensure_ascii=False),
+         encoding="utf-8",
+     )
+     return report
+ 
+ 
++def measure_efficiency(
++    ripeness_model: Any, defect_model: Any, architecture: str
++) -> dict[str, Any]:
++    """Parameter count and per-image latency (both heads) on the current runtime."""
++    return {
++        "parameters_total": count_parameters([ripeness_model, defect_model]),
++        "latency_ms": benchmark_latency(
++            [ripeness_model, defect_model],
++            get_preprocess_input(architecture),
++            INPUT_SIZE,
++        ),
++        "device": describe_device(),
++    }
++
++
+ def main() -> None:
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--data-root", required=True, type=Path)
+     parser.add_argument("--models-dir", type=Path, default=Path("models"))
++    parser.add_argument(
++        "--architecture",
++        nargs="+",
++        choices=sorted(ARCHITECTURES),
++        default=[DEFAULT_ARCHITECTURE],
++        help="Satu atau lebih arsitektur, dilatih berurutan dengan split dan hyperparameter sama.",
++    )
+     parser.add_argument("--seed", type=int, default=42)
+     parser.add_argument("--batch-size", type=int, default=16)
+     parser.add_argument("--head-epochs", type=int, default=8)
+@@ -548,17 +574,31 @@ def main() -> None:
+         help="Reuse existing .keras checkpoints instead of training those tasks again.",
+     )
+     args = parser.parse_args()
+-    results = train(
+-        args.data_root,
+-        args.models_dir,
+-        args.seed,
+-        args.batch_size,
+-        args.head_epochs,
+-        args.fine_tune_epochs,
+-        args.reuse_existing_models,
+-    )
++    results: dict[str, Any] = {}
++    for architecture in args.architecture:
++        results[architecture] = train(
++            args.data_root,
++            args.models_dir,
++            args.seed,
++            args.batch_size,
++            args.head_epochs,
++            args.fine_tune_epochs,
++            args.reuse_existing_models,
++            architecture,
++        )
++        _release_session()
+     print(json.dumps(results, indent=2, ensure_ascii=False))
+ 
+ 
++def _release_session() -> None:
++    """Free graph/memory between architectures in one process (Colab RAM is limited)."""
++    import gc
++
++    import tensorflow as tf
++
++    tf.keras.backend.clear_session()
++    gc.collect()
++
++
+ if __name__ == "__main__":
+     main()
+diff --git a/models/README.md b/models/README.md
+index ee0e9d0..f0232a3 100644
+--- a/models/README.md
++++ b/models/README.md
+@@ -1,8 +1,9 @@
+ # models/
+ 
+-Model Keras hasil training (`ripeness_resnext101.keras` dan
+-`defect_resnext101.keras`) serta metadata dan laporan evaluasi JSON. Model
+-tidak di-commit secara default (lihat `.gitignore`). Model final untuk demo
+-boleh di-commit manual dengan `git add -f models/<nama>`.
++Model Keras hasil training per arsitektur (`<tugas>_<arsitektur>.keras`, dengan
++tugas `ripeness`/`defect` dan arsitektur `resnext50`/`resnext101`), metadata JSON,
++dan laporan `evaluation_<arsitektur>.json`. Model tidak di-commit secara default
++(lihat `.gitignore`). Model final untuk demo boleh di-commit manual dengan
++`git add -f models/<nama>`.
+ 
+-Prosedur training, evaluasi, dan API ada di `docs/ML_RESNEXT101.md`.
++Prosedur training, evaluasi, perbandingan, dan API ada di `docs/ML_RESNEXT101.md`.
+diff --git a/tests/test_ml_api.py b/tests/test_ml_api.py
+index 995cdb4..19eb26c 100644
+--- a/tests/test_ml_api.py
++++ b/tests/test_ml_api.py
+@@ -17,7 +17,7 @@ def test_predict_endpoint_returns_grade_from_both_heads(monkeypatch):
+     monkeypatch.setattr(
+         api,
+         "predict_image",
+-        lambda image, models_dir: {
++        lambda image, models_dir, architecture: {
+             "model": "ResNeXt101",
+             "input_size": [224, 224],
+             "ripeness": {"class": "matang", "level": 1, "confidence": 0.9},
+@@ -60,3 +60,64 @@ def test_predict_endpoint_reports_missing_trained_models(monkeypatch, tmp_path):
+ 
+     assert response.status_code == 503
+     assert "Trained model files are missing" in response.json()["detail"]
++
++
++def test_predict_endpoint_passes_requested_architecture(monkeypatch):
++    seen = {}
++
++    def fake_predict(image, models_dir, architecture):
++        seen["architecture"] = architecture
++        return {"model": "ResNeXt50", "architecture": architecture, "grade": "A"}
++
++    monkeypatch.setattr(api, "predict_image", fake_predict)
++    client = TestClient(api.app)
++    files = {"file": ("tomato.jpg", _image_bytes(), "image/jpeg")}
++
++    response = client.post("/predict?architecture=resnext50", files=files)
++
++    assert response.status_code == 200
++    assert seen["architecture"] == "resnext50"
++
++
++def test_predict_endpoint_uses_env_default_architecture(monkeypatch):
++    seen = {}
++    monkeypatch.setenv("TOMATO_ARCHITECTURE", "resnext50")
++    monkeypatch.setattr(
++        api,
++        "predict_image",
++        lambda image, models_dir, architecture: seen.setdefault("a", architecture) and {"grade": "B"},
++    )
++    client = TestClient(api.app)
++
++    response = client.post(
++        "/predict", files={"file": ("tomato.jpg", _image_bytes(), "image/jpeg")}
++    )
++
++    assert response.status_code == 200
++    assert seen["a"] == "resnext50"
++
++
++def test_predict_endpoint_rejects_unknown_architecture():
++    client = TestClient(api.app)
++
++    response = client.post(
++        "/predict?architecture=resnet18",
++        files={"file": ("tomato.jpg", _image_bytes(), "image/jpeg")},
++    )
++
++    assert response.status_code == 422
++
++
++def test_health_reports_each_architecture(monkeypatch, tmp_path):
++    monkeypatch.setattr(api, "DEFAULT_MODELS_DIR", tmp_path)
++    for name in ("ripeness_resnext50.keras", "ripeness_resnext50.json",
++                 "defect_resnext50.keras", "defect_resnext50.json"):
++        (tmp_path / name).write_bytes(b"x")
++    client = TestClient(api.app)
++
++    body = client.get("/health").json()
++
++    assert body["architectures"]["resnext50"]["status"] == "ready"
++    assert body["architectures"]["resnext101"]["status"] == "model_missing"
++    assert body["architecture"] == "resnext101"
++    assert body["status"] == "model_missing"
+diff --git a/tests/test_ml_compare.py b/tests/test_ml_compare.py
+new file mode 100644
+index 0000000..f85fb02
+--- /dev/null
++++ b/tests/test_ml_compare.py
+@@ -0,0 +1,117 @@
++import json
++from pathlib import Path
++
++import numpy as np
++import pytest
++
++from ml.compare import compare, render_markdown
++from ml.metrics import benchmark_latency, grade_metrics, summarize_latency
++from ml.resnext import artifact_paths, display_name, report_path, validate_architecture
++
++
++def _metrics(f1: float) -> dict:
++    return {"accuracy": f1, "macro_f1": f1}
++
++
++def _write_run(models_dir: Path, architecture: str, *, test_hashes=("a", "b"), device="CPU",
++               batch_size=16, with_hyperparameters=True) -> None:
++    manifest = {
++        "train": [{"sha256": "t1"}],
++        "validation": [{"sha256": "v1"}],
++        "test": [{"sha256": h} for h in test_hashes],
++    }
++    for task in ("ripeness", "defect"):
++        metadata = {"split_manifest": manifest, "seed": 42}
++        if with_hyperparameters:
++            metadata["hyperparameters"] = {
++                "seed": 42, "batch_size": batch_size, "head_epochs": 8, "fine_tune_epochs": 5,
++                "head_learning_rate": 1e-3, "fine_tune_learning_rate": 1e-5,
++                "fine_tune_layers": 30, "early_stopping_patience": 3, "input_size": [224, 224],
++            }
++        artifact_paths(models_dir, task, architecture)[1].write_text(json.dumps(metadata))
++    grade = grade_metrics(["A", "B", "C", "C"], ["A", "B", "C", "A"])
++    report = {
++        "secondary": {"ripeness": _metrics(0.9), "defect": _metrics(0.8)},
++        "primary_independent_test": {
++            "independent_primary_test_images": 4,
++            "grade": grade,
++            "heads": {"ripeness": _metrics(0.5), "defect": _metrics(0.7)},
++        },
++        "efficiency": {
++            "parameters_total": 1000,
++            "latency_ms": {"median": 120.0, "p95": 150.0},
++            "device": device,
++        },
++    }
++    report_path(models_dir, architecture).write_text(json.dumps(report))
++
++
++def test_compare_marks_identical_setup_as_comparable(tmp_path):
++    _write_run(tmp_path, "resnext50")
++    _write_run(tmp_path, "resnext101")
++
++    result = compare(tmp_path)
++
++    assert result["comparable"] is True
++    row = {item["architecture"]: item for item in result["rows"]}["resnext101"]
++    assert row["primary_grade_recall_c"] == 0.5
++    assert row["primary_grade_c_to_a_errors"] == 1
++    assert "SETARA" in render_markdown(result)
++
++
++def test_compare_flags_different_split(tmp_path):
++    _write_run(tmp_path, "resnext50")
++    _write_run(tmp_path, "resnext101", test_hashes=("a", "z"))
++
++    result = compare(tmp_path)
++
++    assert result["comparable"] is False
++    assert any("Partisi" in problem for problem in result["problems"])
++    assert "TIDAK SETARA" in render_markdown(result)
++
++
++def test_compare_flags_different_hyperparameters_and_device(tmp_path):
++    _write_run(tmp_path, "resnext50", batch_size=32, device="GPU: T4")
++    _write_run(tmp_path, "resnext101")
++
++    problems = compare(tmp_path)["problems"]
++
++    assert any("batch_size" in problem for problem in problems)
++    assert any("perangkat berbeda" in problem for problem in problems)
++
++
++def test_compare_accepts_legacy_metadata_without_hyperparameters(tmp_path):
++    _write_run(tmp_path, "resnext50")
++    _write_run(tmp_path, "resnext101", with_hyperparameters=False)
++
++    result = compare(tmp_path)
++
++    assert result["comparable"] is True
++    assert result["notes"]
++
++
++def test_architecture_helpers():
++    assert display_name("resnext50") == "ResNeXt50"
++    assert artifact_paths("m", "ripeness", "resnext101")[0] == Path("m/ripeness_resnext101.keras")
++    with pytest.raises(ValueError):
++        validate_architecture("resnet18")
++    with pytest.raises(ValueError):
++        artifact_paths("m", "unknown", "resnext50")
++
++
++def test_latency_summary_and_benchmark_with_fake_models():
++    summary = summarize_latency([10, 20, 30, 40])
++    assert summary["median"] == 25
++    assert summary["runs"] == 4
++
++    class FakeModel:
++        calls = 0
++
++        def predict(self, batch, verbose=0):
++            FakeModel.calls += 1
++            assert batch.shape == (1, 8, 8, 3)
++            return np.zeros((1, 2))
++
++    result = benchmark_latency([FakeModel(), FakeModel()], lambda x: x, (8, 8), runs=5, warmup=2)
++    assert result["runs"] == 5
++    assert FakeModel.calls == (5 + 2) * 2

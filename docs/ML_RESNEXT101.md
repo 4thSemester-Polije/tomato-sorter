@@ -1,4 +1,4 @@
-# ResNeXt-101: data, training, evaluation, and API
+# ResNeXt-50 dan ResNeXt-101: data, training, evaluation, comparison, and API
 
 ## Dataset inventory
 
@@ -44,8 +44,11 @@ for all labelled primary photos.
 
 ## Model and implementation
 
-Two Keras transfer-learning models are trained using the ImageNet-pretrained
-ResNeXt-101 backbone (`image-classifiers`, Keras/TensorFlow-Keras backend):
+Two Keras transfer-learning models per architecture are trained using an
+ImageNet-pretrained ResNeXt backbone (`image-classifiers`, Keras/TensorFlow-Keras
+backend). Supported architectures: `resnext50` and `resnext101`. Both use the
+same code path, split, hyperparameters, preprocessing, and metrics
+(`ml/metrics.py`), so the only difference is backbone depth:
 
 1. Ripeness: matang, setengah matang, mentah (levels 1, 2, 3).
 2. Visible defect: healthy, reject (levels 1, 3).
@@ -79,21 +82,25 @@ Install the requirements in Google Colab (or another Python 3.11 runtime):
 %pip install -r requirements-ml.txt
 ```
 
-Mount or upload the dataset, then run:
+Mount the dataset, then train one or both architectures. Both in one run
+(sequential, same seed and split):
 
 ```python
 !python -m ml.train \
   --data-root "/content/drive/MyDrive/Datasets" \
-  --models-dir models \
+  --models-dir "/content/drive/MyDrive/tomato-models" \
+  --architecture resnext50 resnext101 \
   --seed 42
 ```
 
-The data-root directory must contain `Primer` and `Sekunder`. Training writes:
+Only one architecture (for example the missing ResNeXt-50): `--architecture resnext50`.
+Writing `--models-dir` to Google Drive keeps the models if the Colab runtime resets.
+The data-root directory must contain `Primer` and `Sekunder`. For each
+architecture `<arch>` (`resnext50` or `resnext101`) training writes:
 
-- `models/ripeness_resnext101.keras`
-- `models/defect_resnext101.keras`
-- One JSON metadata file per model
-- `models/evaluation_resnext101.json`
+- `models/ripeness_<arch>.keras` and `models/defect_<arch>.keras`
+- One JSON metadata file per model (split manifest, hyperparameters, parameter count, training time)
+- `models/evaluation_<arch>.json` (secondary + primary metrics, parameter count, latency, device)
 
 Each model metadata file also stores the SHA-256-based train, validation, and
 test split manifest so the ResNeXt-50 comparison can reuse the same image
@@ -105,8 +112,13 @@ Primer results. The primary evaluation can be repeated after training:
 ```python
 !python -m ml.evaluate \
   --data-root "/content/drive/MyDrive/Datasets" \
-  --models-dir models
+  --models-dir models \
+  --architecture resnext101
 ```
+
+`ml.evaluate` updates the primary and efficiency sections of
+`evaluation_<arch>.json` and keeps the stored secondary results. Use
+`--no-write` to only print.
 
 If a previous run completed a model's training but stopped while loading its
 checkpoint, rerun with `--reuse-existing-models`. It skips training for
@@ -116,12 +128,31 @@ same dataset, model configuration, and split seed. The option assumes any
 existing checkpoint for that task is complete.
 
 Evaluation metrics are accuracy, macro F1, per-class precision and recall,
-confusion matrices, and classification reports. Review class-C recall and
-mistakes from C to A in particular. To compare with ResNeXt-50, both runs must
-use the same image manifests, seed, partitions, input size, preprocessing, and
-evaluation set; compare macro F1, class-C recall, and inference latency. This
-repository does not claim comparison results until both models have actually
-been trained and evaluated.
+confusion matrices, and classification reports, computed by the same functions
+for every architecture. Review class-C recall and mistakes from C to A in
+particular.
+
+## Compare ResNeXt-50 and ResNeXt-101
+
+After both architectures have reports in the same models directory:
+
+```python
+!python -m ml.compare --models-dir models --output models/compare_resnext.md
+```
+
+The command prints a table (secondary and primary macro F1, grade accuracy,
+class-C recall, C-to-A errors, median/p95 latency, parameter count, device) and
+verifies the comparison is fair: identical SHA-256 split manifests, identical
+hyperparameters, the same primary evaluation set, and latency measured on the
+same device. Any mismatch is printed as `PERINGATAN` and the status becomes
+`TIDAK SETARA`; do not use such a table in the report.
+
+Latency is measured with a fixed synthetic image, 3 warm-up runs and 30 timed
+runs of both heads in sequence. Measure both architectures in the same Colab
+runtime type. If one model was trained on a different runtime, re-run
+`python -m ml.evaluate --architecture <arch>` for it in the current runtime
+before comparing. This repository does not claim comparison results until both
+models have actually been trained and evaluated.
 
 ## HTTP API
 
@@ -131,11 +162,14 @@ After training, start the API from the repository root:
 python -m uvicorn ml.api:app --host 0.0.0.0 --port 8000
 ```
 
-`GET /health` reports whether model artifacts are present. Send a JPG, PNG, or
-HEIC as multipart form field `file` to `POST /predict` (maximum 10 MiB):
+`GET /health` reports whether model artifacts are present for each architecture.
+Send a JPG, PNG, or HEIC as multipart form field `file` to `POST /predict`
+(maximum 10 MiB). The optional query parameter `architecture` (`resnext50` or
+`resnext101`) selects the model; without it the API uses the `TOMATO_ARCHITECTURE`
+environment variable, default `resnext101`:
 
 ```powershell
-curl.exe -X POST http://127.0.0.1:8000/predict -F "file=@tomat.jpg"
+curl.exe -X POST "http://127.0.0.1:8000/predict?architecture=resnext50" -F "file=@tomat.jpg"
 ```
 
 Example response:
@@ -143,6 +177,7 @@ Example response:
 ```json
 {
   "model": "ResNeXt101",
+  "architecture": "resnext101",
   "input_size": [224, 224],
   "ripeness": {
     "class": "matang",
@@ -182,8 +217,8 @@ created by this project, not files from untrusted sources.
 flowchart LR
     A[Inspect and deduplicate secondary JPGs] --> B[Stratified 70/15/15 split, seed 42]
     B --> C[Resize 224x224 and ResNeXt preprocessing]
-    C --> D1[Train Keras ResNeXt-101 ripeness head]
-    C --> D2[Train Keras ResNeXt-101 defect head]
+    C --> D1[Train Keras ResNeXt-50/101 ripeness head]
+    C --> D2[Train Keras ResNeXt-50/101 defect head]
     D1 --> E[Evaluate held-out secondary test sets]
     D2 --> E
     E --> F[Save two Keras models and metadata]
@@ -192,4 +227,5 @@ flowchart LR
     H --> I[Apply worst-level rubric and return A/B/C]
     F --> J[Evaluate 108 independent labelled Primer photos]
     J --> K[Report macro F1, precision/recall, confusion matrices]
+    K --> L[ml.compare: ResNeXt-50 vs 101 fairness check and table]
 ```

@@ -1,4 +1,4 @@
-"""HTTP API for the trained ResNeXt-101 tomato classifiers."""
+"""HTTP API for the trained ResNeXt (50 / 101) tomato classifiers."""
 
 from __future__ import annotations
 
@@ -10,40 +10,57 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from PIL import Image, UnidentifiedImageError
 import pillow_heif
 
 from ml.resnext import (
+    ARCHITECTURES,
+    DEFAULT_ARCHITECTURE,
     DEFECT_LEVELS,
     INPUT_SIZE,
-    MODEL_NAME,
     RIPENESS_LEVELS,
+    TASKS,
+    artifact_paths,
+    display_name,
     get_preprocess_input,
     load_trusted_model,
+    validate_architecture,
 )
 from ml.rubric import grade_from_levels
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_MODELS_DIR = Path(os.environ.get("TOMATO_MODELS_DIR", "models"))
+ARCHITECTURE_PATTERN = "^(" + "|".join(sorted(ARCHITECTURES)) + ")$"
 pillow_heif.register_heif_opener()
 
 app = FastAPI(
     title="Tomato Sorter ML API",
-    version="1.0.0",
-    description="ResNeXt-101 predictions for tomato ripeness, visible defects, and grade.",
+    version="1.1.0",
+    description="ResNeXt-50/101 predictions for tomato ripeness, visible defects, and grade.",
 )
 
 
+def _default_architecture() -> str:
+    """Architecture used when a request does not pick one (env TOMATO_ARCHITECTURE)."""
+    return validate_architecture(os.environ.get("TOMATO_ARCHITECTURE", DEFAULT_ARCHITECTURE))
+
+
+def _required_files(models_dir: Path, architecture: str) -> list[Path]:
+    paths: list[Path] = []
+    for task in TASKS:
+        paths.extend(artifact_paths(models_dir, task, architecture))
+    return paths
+
+
 @lru_cache(maxsize=4)
-def _load_models(models_dir: str) -> tuple[Any, Any, dict[str, Any], dict[str, Any], Any]:
+def _load_models(
+    models_dir: str, architecture: str = DEFAULT_ARCHITECTURE
+) -> tuple[Any, Any, dict[str, Any], dict[str, Any], Any]:
     directory = Path(models_dir)
-    paths = (
-        directory / "ripeness_resnext101.keras",
-        directory / "defect_resnext101.keras",
-        directory / "ripeness_resnext101.json",
-        directory / "defect_resnext101.json",
-    )
+    ripeness_files = artifact_paths(directory, "ripeness", architecture)
+    defect_files = artifact_paths(directory, "defect", architecture)
+    paths = (ripeness_files[0], defect_files[0], ripeness_files[1], defect_files[1])
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -57,7 +74,7 @@ def _load_models(models_dir: str) -> tuple[Any, Any, dict[str, Any], dict[str, A
     defect_metadata = json.loads(
         paths[3].read_text(encoding="utf-8")
     )
-    preprocess_input = get_preprocess_input()
+    preprocess_input = get_preprocess_input(architecture)
     return (
         ripeness_model,
         defect_model,
@@ -85,7 +102,11 @@ def _class_prediction(
     }
 
 
-def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) -> dict[str, Any]:
+def predict_image(
+    image: Image.Image,
+    models_dir: Path = DEFAULT_MODELS_DIR,
+    architecture: str = DEFAULT_ARCHITECTURE,
+) -> dict[str, Any]:
     """Run both classifiers and combine their levels using the project rubric."""
     (
         ripeness_model,
@@ -93,7 +114,7 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) -> 
         ripeness_metadata,
         defect_metadata,
         preprocess_input,
-    ) = _load_models(str(models_dir.resolve()))
+    ) = _load_models(str(models_dir.resolve()), architecture)
     resized = image.convert("RGB").resize((INPUT_SIZE[1], INPUT_SIZE[0]))
     pixels = np.asarray(resized, dtype=np.float32)
     processed = preprocess_input(np.expand_dims(pixels, axis=0))
@@ -111,7 +132,8 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) -> 
         DEFECT_LEVELS,
     )
     return {
-        "model": MODEL_NAME,
+        "model": display_name(architecture),
+        "architecture": architecture,
         "input_size": list(INPUT_SIZE),
         "ripeness": ripeness,
         "defect": defect,
@@ -121,22 +143,37 @@ def predict_image(image: Image.Image, models_dir: Path = DEFAULT_MODELS_DIR) -> 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    required = (
-        DEFAULT_MODELS_DIR / "ripeness_resnext101.keras",
-        DEFAULT_MODELS_DIR / "defect_resnext101.keras",
-        DEFAULT_MODELS_DIR / "ripeness_resnext101.json",
-        DEFAULT_MODELS_DIR / "defect_resnext101.json",
-    )
-    missing = [path.name for path in required if not path.is_file()]
+    default = _default_architecture()
+    architectures: dict[str, Any] = {}
+    for architecture in ARCHITECTURES:
+        missing = [
+            path.name
+            for path in _required_files(DEFAULT_MODELS_DIR, architecture)
+            if not path.is_file()
+        ]
+        architectures[architecture] = {
+            "status": "ready" if not missing else "model_missing",
+            "missing_files": missing,
+        }
     return {
-        "status": "ready" if not missing else "model_missing",
-        "model": MODEL_NAME,
-        "missing_files": missing,
+        "status": architectures[default]["status"],
+        "model": display_name(default),
+        "architecture": default,
+        "missing_files": architectures[default]["missing_files"],
+        "architectures": architectures,
     }
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
+async def predict(
+    file: UploadFile = File(...),
+    architecture: str | None = Query(
+        default=None,
+        pattern=ARCHITECTURE_PATTERN,
+        description="resnext50 atau resnext101. Kosong = TOMATO_ARCHITECTURE (bawaan resnext101).",
+    ),
+) -> dict[str, Any]:
+    chosen = architecture or _default_architecture()
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
@@ -151,6 +188,6 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
         ) from exc
 
     try:
-        return predict_image(decoded_image, DEFAULT_MODELS_DIR)
+        return predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

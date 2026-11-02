@@ -1,4 +1,4 @@
-"""Train and evaluate separate ResNeXt-101 ripeness and defect classifiers."""
+"""Train and evaluate separate ripeness and defect classifiers (ResNeXt-50 or ResNeXt-101)."""
 
 from __future__ import annotations
 
@@ -7,29 +7,48 @@ import csv
 import hashlib
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split
 
+from ml.metrics import (
+    benchmark_latency,
+    classification_metrics,
+    count_parameters,
+    describe_device,
+    grade_metrics,
+)
 from ml.resnext import (
+    ARCHITECTURES,
+    DEFAULT_ARCHITECTURE,
     DEFECT_CLASSES,
     DEFECT_LEVELS,
+    FINE_TUNE_LAYERS,
     INPUT_SIZE,
-    MODEL_NAME,
     RIPENESS_CLASSES,
     RIPENESS_LEVELS,
+    artifact_paths,
     create_model,
+    display_name,
     get_preprocess_input,
     load_trusted_model,
+    report_path,
+    validate_architecture,
 )
 from ml.rubric import grade_from_levels
 
 logger = logging.getLogger(__name__)
+
+# Hyperparameter tetap untuk semua arsitektur. Nilai ini dicatat di metadata
+# model agar ml.compare dapat memastikan perbandingan ResNeXt-50 vs 101 adil.
+HEAD_LEARNING_RATE = 1e-3
+FINE_TUNE_LEARNING_RATE = 1e-5
+EARLY_STOPPING_PATIENCE = 3
 
 
 @dataclass(frozen=True)
@@ -113,6 +132,7 @@ def _load_tensorflow_dataset(
     preprocess_input: Any,
     batch_size: int,
     training: bool,
+    seed: int = 42,
 ) -> Any:
     import tensorflow as tf
 
@@ -135,48 +155,10 @@ def _load_tensorflow_dataset(
     if training:
         dataset = dataset.shuffle(
             len(samples),
-            seed=42,
+            seed=seed,
             reshuffle_each_iteration=True,
         )
     return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
-
-
-def _classification_metrics(
-    expected: Sequence[int],
-    predicted: Sequence[int],
-    class_names: Sequence[str],
-) -> dict[str, Any]:
-    from sklearn.metrics import precision_recall_fscore_support
-
-    labels = list(range(len(class_names)))
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        expected, predicted, labels=labels, zero_division=0
-    )
-    return {
-        "accuracy": float(accuracy_score(expected, predicted)),
-        "macro_f1": float(f1_score(expected, predicted, average="macro")),
-        "classes": list(class_names),
-        "precision_per_class": {
-            name: float(precision[index]) for index, name in enumerate(class_names)
-        },
-        "recall_per_class": {
-            name: float(recall[index]) for index, name in enumerate(class_names)
-        },
-        "f1_per_class": {
-            name: float(f1[index]) for index, name in enumerate(class_names)
-        },
-        "confusion_matrix": confusion_matrix(
-            expected, predicted, labels=labels
-        ).tolist(),
-        "classification_report": classification_report(
-            expected,
-            predicted,
-            labels=labels,
-            target_names=list(class_names),
-            output_dict=True,
-            zero_division=0,
-        ),
-    }
 
 
 def _metric_report(
@@ -186,7 +168,7 @@ def _metric_report(
 ) -> dict[str, Any]:
     expected = np.concatenate([labels.numpy() for _, labels in dataset])
     predicted = np.argmax(model.predict(dataset, verbose=0), axis=1)
-    return _classification_metrics(expected, predicted, class_names)
+    return classification_metrics(expected, predicted, class_names)
 
 
 def _train_task(
@@ -200,9 +182,13 @@ def _train_task(
     head_epochs: int,
     fine_tune_epochs: int,
     reuse_existing: bool = False,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> tuple[Any, dict[str, Any]]:
     import tensorflow as tf
 
+    validate_architecture(architecture)
+    # Seed global (Python, NumPy, TensorFlow) agar tiap arsitektur mulai dari kondisi acak yang sama.
+    tf.keras.utils.set_random_seed(seed)
     train_samples, validation_samples, test_samples = _split_samples(samples, seed)
     class_to_index = {name: index for index, name in enumerate(class_names)}
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,30 +197,36 @@ def _train_task(
         logger.info("Reusing existing model checkpoint: %s", output_path)
         model = load_trusted_model(output_path)
         backbone = None
-        preprocess_input = get_preprocess_input()
+        preprocess_input = get_preprocess_input(architecture)
         history: dict[str, list[float]] = {}
     else:
-        model, backbone, preprocess_input = create_model(task, len(class_names))
+        model, backbone, preprocess_input = create_model(
+            task, len(class_names), architecture=architecture
+        )
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=HEAD_LEARNING_RATE),
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
         )
         history = {}
     train_data = _load_tensorflow_dataset(
-        train_samples, class_to_index, preprocess_input, batch_size, True
+        train_samples, class_to_index, preprocess_input, batch_size, True, seed
     )
     validation_data = _load_tensorflow_dataset(
-        validation_samples, class_to_index, preprocess_input, batch_size, False
+        validation_samples, class_to_index, preprocess_input, batch_size, False, seed
     )
     test_data = _load_tensorflow_dataset(
-        test_samples, class_to_index, preprocess_input, batch_size, False
+        test_samples, class_to_index, preprocess_input, batch_size, False, seed
     )
 
+    training_seconds: float | None = None
     if not checkpoint_reused:
+        training_started = time.perf_counter()
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=3, restore_best_weights=True
+                monitor="val_loss",
+                patience=EARLY_STOPPING_PATIENCE,
+                restore_best_weights=True,
             ),
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=str(output_path),
@@ -254,13 +246,13 @@ def _train_task(
         )
         if fine_tune_epochs > 0:
             backbone.trainable = True
-            for layer in backbone.layers[:-30]:
+            for layer in backbone.layers[:-FINE_TUNE_LAYERS]:
                 layer.trainable = False
             for layer in backbone.layers:
                 if isinstance(layer, tf.keras.layers.BatchNormalization):
                     layer.trainable = False
             model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+                optimizer=tf.keras.optimizers.Adam(learning_rate=FINE_TUNE_LEARNING_RATE),
                 loss="sparse_categorical_crossentropy",
                 metrics=["accuracy"],
             )
@@ -277,15 +269,30 @@ def _train_task(
                     for key, values in fine_tune_history.history.items()
                 }
             )
+        training_seconds = time.perf_counter() - training_started
 
     metadata = {
-        "model": MODEL_NAME,
+        "model": display_name(architecture),
+        "architecture": architecture,
         "task": task,
         "input_size": list(INPUT_SIZE),
         "class_names": list(class_names),
         "class_levels": class_levels,
         "pretrained_weights": "ImageNet",
         "seed": seed,
+        "hyperparameters": {
+            "seed": seed,
+            "batch_size": batch_size,
+            "head_epochs": head_epochs,
+            "fine_tune_epochs": fine_tune_epochs,
+            "head_learning_rate": HEAD_LEARNING_RATE,
+            "fine_tune_learning_rate": FINE_TUNE_LEARNING_RATE,
+            "fine_tune_layers": FINE_TUNE_LAYERS,
+            "early_stopping_patience": EARLY_STOPPING_PATIENCE,
+            "input_size": list(INPUT_SIZE),
+        },
+        "parameters": count_parameters([model]),
+        "training_seconds": training_seconds,
         "split_percentages": {"train": 70, "validation": 15, "test": 15},
         "unique_images": {
             "total": len(samples),
@@ -381,16 +388,17 @@ def _evaluate_primary(
     ripeness_model: Any,
     defect_model: Any,
     models_dir: Path,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> dict[str, Any]:
     from PIL import Image
 
     ripeness_metadata = json.loads(
-        (models_dir / "ripeness_resnext101.json").read_text(encoding="utf-8")
+        artifact_paths(models_dir, "ripeness", architecture)[1].read_text(encoding="utf-8")
     )
     defect_metadata = json.loads(
-        (models_dir / "defect_resnext101.json").read_text(encoding="utf-8")
+        artifact_paths(models_dir, "defect", architecture)[1].read_text(encoding="utf-8")
     )
-    preprocess_input = get_preprocess_input()
+    preprocess_input = get_preprocess_input(architecture)
 
     expected_grades: list[str] = []
     predicted_grades: list[str] = []
@@ -426,13 +434,13 @@ def _evaluate_primary(
     )
     return {
         "independent_primary_test_images": len(expected_grades),
-        "grade": _grade_metrics(expected_grades, predicted_grades),
+        "grade": grade_metrics(expected_grades, predicted_grades),
         "heads": {
-            "ripeness": _classification_metrics(
+            "ripeness": classification_metrics(
                 ripeness_true, ripeness_predicted, RIPENESS_CLASSES
             ),
             "defect": {
-                **_classification_metrics(
+                **classification_metrics(
                     defect_true, defect_predicted, DEFECT_CLASSES
                 ),
                 "evaluated_images_with_binary_ground_truth": len(defect_true),
@@ -440,13 +448,6 @@ def _evaluate_primary(
             },
         },
     }
-
-
-def _grade_metrics(expected: Sequence[str], predicted: Sequence[str]) -> dict[str, Any]:
-    class_names = ("A", "B", "C")
-    true_indices = [class_names.index(value) for value in expected]
-    predicted_indices = [class_names.index(value) for value in predicted]
-    return _classification_metrics(true_indices, predicted_indices, class_names)
 
 
 def train(
@@ -457,8 +458,10 @@ def train(
     head_epochs: int = 8,
     fine_tune_epochs: int = 5,
     reuse_existing: bool = False,
+    architecture: str = DEFAULT_ARCHITECTURE,
 ) -> dict[str, Any]:
     """Train both heads and evaluate on secondary holdouts and primary photos."""
+    validate_architecture(architecture)
     if batch_size < 1:
         raise ValueError("batch_size must be greater than zero.")
     if head_epochs < 1:
@@ -487,36 +490,36 @@ def train(
         ripeness_samples,
         RIPENESS_CLASSES,
         RIPENESS_LEVELS,
-        output_directory / "ripeness_resnext101.keras",
+        artifact_paths(output_directory, "ripeness", architecture)[0],
         seed,
         batch_size,
         head_epochs,
         fine_tune_epochs,
         reuse_existing,
+        architecture,
     )
     defect_model, defect_metadata = _train_task(
         "defect",
         defect_samples,
         DEFECT_CLASSES,
         DEFECT_LEVELS,
-        output_directory / "defect_resnext101.keras",
+        artifact_paths(output_directory, "defect", architecture)[0],
         seed,
         batch_size,
         head_epochs,
         fine_tune_epochs,
         reuse_existing,
+        architecture,
     )
 
-    for filename, metadata in (
-        ("ripeness_resnext101.json", ripeness_metadata),
-        ("defect_resnext101.json", defect_metadata),
-    ):
-        (output_directory / filename).write_text(
+    for task, metadata in (("ripeness", ripeness_metadata), ("defect", defect_metadata)):
+        artifact_paths(output_directory, task, architecture)[1].write_text(
             json.dumps(metadata, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
     report = {
-        "model": MODEL_NAME,
+        "model": display_name(architecture),
+        "architecture": architecture,
         "input_size": list(INPUT_SIZE),
         "seed": seed,
         "secondary": {
@@ -524,20 +527,43 @@ def train(
             "defect": defect_metadata["test_metrics"],
         },
         "primary_independent_test": _evaluate_primary(
-            root, ripeness_model, defect_model, output_directory
+            root, ripeness_model, defect_model, output_directory, architecture
         ),
+        "efficiency": measure_efficiency(ripeness_model, defect_model, architecture),
     }
-    (output_directory / "evaluation_resnext101.json").write_text(
+    report_path(output_directory, architecture).write_text(
         json.dumps(report, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return report
 
 
+def measure_efficiency(
+    ripeness_model: Any, defect_model: Any, architecture: str
+) -> dict[str, Any]:
+    """Parameter count and per-image latency (both heads) on the current runtime."""
+    return {
+        "parameters_total": count_parameters([ripeness_model, defect_model]),
+        "latency_ms": benchmark_latency(
+            [ripeness_model, defect_model],
+            get_preprocess_input(architecture),
+            INPUT_SIZE,
+        ),
+        "device": describe_device(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", required=True, type=Path)
     parser.add_argument("--models-dir", type=Path, default=Path("models"))
+    parser.add_argument(
+        "--architecture",
+        nargs="+",
+        choices=sorted(ARCHITECTURES),
+        default=[DEFAULT_ARCHITECTURE],
+        help="Satu atau lebih arsitektur, dilatih berurutan dengan split dan hyperparameter sama.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--head-epochs", type=int, default=8)
@@ -548,16 +574,30 @@ def main() -> None:
         help="Reuse existing .keras checkpoints instead of training those tasks again.",
     )
     args = parser.parse_args()
-    results = train(
-        args.data_root,
-        args.models_dir,
-        args.seed,
-        args.batch_size,
-        args.head_epochs,
-        args.fine_tune_epochs,
-        args.reuse_existing_models,
-    )
+    results: dict[str, Any] = {}
+    for architecture in args.architecture:
+        results[architecture] = train(
+            args.data_root,
+            args.models_dir,
+            args.seed,
+            args.batch_size,
+            args.head_epochs,
+            args.fine_tune_epochs,
+            args.reuse_existing_models,
+            architecture,
+        )
+        _release_session()
     print(json.dumps(results, indent=2, ensure_ascii=False))
+
+
+def _release_session() -> None:
+    """Free graph/memory between architectures in one process (Colab RAM is limited)."""
+    import gc
+
+    import tensorflow as tf
+
+    tf.keras.backend.clear_session()
+    gc.collect()
 
 
 if __name__ == "__main__":
