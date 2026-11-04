@@ -5,7 +5,10 @@ import uvicorn
 
 from controller.config import load_config
 from dashboard.app import create_app
+from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 def main():
     ap = argparse.ArgumentParser(prog="python -m dashboard", description="Dashboard web Tomato Sorter")

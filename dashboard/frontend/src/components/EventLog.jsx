@@ -19,7 +19,11 @@ export default function EventLog({ events }) {
         </div>
       </div>
       {shown.length === 0 ? (
-        <p className="muted">Tidak ada log.</p>
+        <div className="empty">
+          <span className="empty-ico" aria-hidden="true">📋</span>
+          <strong>Tidak ada log</strong>
+          <p>Peristiwa dari controller dan firmware akan tampil di sini.</p>
+        </div>
       ) : (
         <ul className="log">
           {shown.map((e) => (

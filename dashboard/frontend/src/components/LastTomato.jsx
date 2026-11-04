@@ -6,7 +6,11 @@ export default function LastTomato({ tomato }) {
     <section className="card">
       <h2>Tomat terakhir</h2>
       {!tomato ? (
-        <p className="muted">Belum ada tomat yang dinilai.</p>
+        <div className="empty">
+          <span className="empty-ico" aria-hidden="true">🍅</span>
+          <strong>Belum ada tomat yang dinilai</strong>
+          <p>Hasil tomat terakhir akan muncul di sini setelah controller mengirim data.</p>
+        </div>
       ) : (
         <div className="last">
           <div className="last-photo">
