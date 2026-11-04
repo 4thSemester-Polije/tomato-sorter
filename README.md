@@ -20,7 +20,7 @@ Proyek terintegrasi untuk tiga mata kuliah: Workshop Sistem Tertanam, Pengolahan
 | `vision/` | Pengolahan citra: segmentasi tomat dan ekstraksi fitur |
 | `ml/` | Sistem cerdas: aturan rubrik, training ResNeXt-101, evaluasi, API prediksi |
 | `controller/` | Program utama di PC: webcam, deteksi kehadiran tomat, vision, model, komunikasi serial |
-| `dashboard/` | Antarmuka web (prioritas terakhir) |
+| `dashboard/` | Dashboard web: FastAPI + SQLite, kamera MJPEG, WebSocket, frontend React + Vite, chatbot. Lihat `dashboard/README.md` |
 | `data/` | `labels.csv` (di Git). Foto mentah di `data/raw/` TIDAK di-commit |
 | `models/` | Model hasil pelatihan (tidak di-commit secara default) |
 | `docs/` | Rubrik, protokol serial, alur alat, panduan kontribusi, [panduan ML/API](docs/ML_RESNEXT101.md) |
