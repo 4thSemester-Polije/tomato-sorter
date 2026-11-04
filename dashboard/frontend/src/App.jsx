@@ -12,13 +12,26 @@ export default function App() {
   return (
     <>
       <StatusBar live={live} />
-      <main className="grid">
-        <CameraCard live={live} />
-        <LastTomato tomato={live.tomatoes[0]} />
-        <Stats stats={live.stats} />
-        <ChatPanel />
-        <EventLog events={live.events} />
-        <History pageSize={25} refreshKey={live.newTomatoTick} statusKey={live.tomatoes[0]?.serial_status} />
+      <main className="dashboard">
+        <div className="page-intro">
+          <div>
+            <p className="intro-eyebrow">MONITORING SYSTEM</p>
+            <h2>Ruang kendali</h2>
+            <p className="muted">Pantau proses sortir, performa alat, dan hasil klasifikasi tomat.</p>
+          </div>
+          <span className={`live-badge${live.connected ? " connected" : ""}`}>
+            <span className="live-dot" />
+            {live.connected ? "Dashboard realtime" : "Menyambungkan"}
+          </span>
+        </div>
+        <div className="grid">
+          <CameraCard live={live} />
+          <LastTomato tomato={live.tomatoes[0]} />
+          <Stats stats={live.stats} />
+          <ChatPanel />
+          <EventLog events={live.events} />
+          <History pageSize={25} refreshKey={live.newTomatoTick} statusKey={live.tomatoes[0]?.serial_status} />
+        </div>
       </main>
     </>
   );

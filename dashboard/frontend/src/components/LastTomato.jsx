@@ -3,7 +3,7 @@ import { GRADE_NOTE, clock, ms, pct } from "../format.js";
 
 export default function LastTomato({ tomato }) {
   return (
-    <section className="card">
+    <section className="card last-card">
       <h2>Tomat terakhir</h2>
       {!tomato ? (
         <div className="empty">
