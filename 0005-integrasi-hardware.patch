@@ -1,0 +1,498 @@
+diff --git a/.gitignore b/.gitignore
+index 9635770..0774004 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,6 +5,7 @@ __pycache__/
+ venv/
+ .pytest_cache/
+ .env
++config.local.yaml
+ 
+ # Editor
+ .vscode/
+diff --git a/config.yaml b/config.yaml
+index 03299e5..2280a01 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -1,4 +1,8 @@
+ # Semua parameter proyek. Nilai null = BELUM DIUKUR, isi setelah kalibrasi.
++# Nilai yang berbeda per laptop (port serial, indeks kamera) JANGAN diubah di sini: buat file
++# config.local.yaml di folder ini (tidak masuk Git), isi hanya yang berbeda. Contoh:
++#   serial: {port: COM5}
++#   camera: {index: 1}
+ serial:
+   port: COM3            # Windows: COMx | Linux: /dev/ttyUSB0 | macOS: /dev/tty.usbserial-xxx
+   baudrate: 115200
+@@ -11,7 +15,7 @@ camera:
+   flush_frames: 5       # buang frame lama dari buffer webcam sebelum mengambil gambar
+ 
+ capture:
+-  settle_after_detect_s: 1.0.   # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
++  settle_after_detect_s: 1.0    # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
+ 
+ rubric:                 # lihat docs/RUBRIK.md
+   red_ripe_min_pct: 60      # tingkat 1 bila merah >= nilai ini (acuan USDA)
+@@ -51,6 +55,6 @@ dashboard:                      # lihat dashboard/README.md
+     max_per_minute: 20
+ 
+ ml:                             # opsional: controller memanggil ml/api.py (uvicorn ml.api:app) untuk klasifikasi gambar
+-  api_url: null                 # mis. http://127.0.0.1:9000 ; null = pakai ml/predict.py (fitur)
+-  architecture: null            # resnext50 | resnext101 | null (bawaan server)
++  api_url: http://127.0.0.1:9000  # jalankan dulu: python -m uvicorn ml.api:app --port 9000 ; null = pakai ml/predict.py (fitur)
++  architecture: resnext101      # resnext50 | resnext101 | null (bawaan server)
+   timeout_s: 10
+diff --git a/controller/config.py b/controller/config.py
+index cd8a489..750dc5d 100644
+--- a/controller/config.py
++++ b/controller/config.py
+@@ -1,11 +1,34 @@
+-"""Memuat config.yaml. Semua parameter proyek dibaca dari sini, bukan ditulis di kode."""
++"""Memuat config.yaml. Semua parameter proyek dibaca dari sini, bukan ditulis di kode.
++
++Nilai yang berbeda per laptop (port serial, indeks kamera) ditaruh di config.local.yaml di folder yang
++sama. File itu tidak masuk Git dan hanya berisi bagian yang berbeda; isinya menimpa config.yaml.
++"""
+ from pathlib import Path
+ 
+ import yaml
+ 
+ DEFAULT_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
++LOCAL_NAME = "config.local.yaml"
++
++
++def _deep_merge(base: dict, override: dict) -> dict:
++    for key, value in override.items():
++        if isinstance(value, dict) and isinstance(base.get(key), dict):
++            _deep_merge(base[key], value)
++        else:
++            base[key] = value
++    return base
+ 
+ 
+ def load_config(path=None) -> dict:
+-    with open(path or DEFAULT_PATH, "r", encoding="utf-8") as f:
+-        return yaml.safe_load(f)
++    path = Path(path) if path else DEFAULT_PATH
++    with open(path, "r", encoding="utf-8") as f:
++        cfg = yaml.safe_load(f)
++    local = path.with_name(LOCAL_NAME)
++    if local.is_file():
++        with open(local, "r", encoding="utf-8") as f:
++            override = yaml.safe_load(f) or {}
++        if not isinstance(override, dict):
++            raise ValueError(f"{local.name} harus berisi pemetaan YAML (kunci: nilai)")
++        _deep_merge(cfg, override)
++    return cfg
+diff --git a/controller/main.py b/controller/main.py
+index 81e5ce2..04dd1da 100644
+--- a/controller/main.py
++++ b/controller/main.py
+@@ -174,11 +174,16 @@ class Controller:
+ 
+ 
+ def validate_config(cfg):
+-    if cfg["capture"]["settle_after_detect_s"] is None:
++    settle = cfg["capture"]["settle_after_detect_s"]
++    if settle is None:
+         raise SystemExit(
+             "capture.settle_after_detect_s di config.yaml masih null. Ukur jeda tomat diam setelah DETECT, "
+             "lalu isi nilainya (untuk uji awal boleh 1.0)."
+         )
++    if isinstance(settle, bool) or not isinstance(settle, (int, float)) or settle < 0:
++        raise SystemExit(
++            f"capture.settle_after_detect_s harus angka >= 0, bukan {settle!r}. Periksa salah ketik di config.yaml."
++        )
+ 
+ 
+ def main():
+@@ -186,7 +191,7 @@ def main():
+ 
+     from controller.camera import Camera
+     from controller.dashboard_client import DashboardClient
+-    from controller.ml_client import make_image_predictor
++    from controller.ml_client import check_api, make_image_predictor
+     from controller.serial_link import SerialLink
+     from ml.predict import predict
+ 
+@@ -203,6 +208,10 @@ def main():
+     image_predict = None
+     ml = cfg.get("ml") or {}
+     if ml.get("api_url"):
++        ok, message = check_api(ml["api_url"], ml.get("architecture"))
++        if not ok:
++            raise SystemExit(message)
++        print(message)
+         image_predict = make_image_predictor(ml["api_url"], ml.get("architecture"), ml.get("timeout_s", 10))
+         print(f"Klasifikasi lewat API model: {ml['api_url']}")
+ 
+diff --git a/controller/ml_client.py b/controller/ml_client.py
+index 535ced3..9bd70d3 100644
+--- a/controller/ml_client.py
++++ b/controller/ml_client.py
+@@ -30,3 +30,21 @@ def make_image_predictor(api_url: str, architecture: str | None = None, timeout_
+         return result
+ 
+     return predict
++
++
++def check_api(api_url: str, architecture: str | None = None, timeout_s: float = 5.0) -> tuple[bool, str]:
++    """Periksa GET /health sebelum controller mulai, supaya kegagalan terlihat sejak awal, bukan pada tomat pertama."""
++    url = api_url.rstrip("/") + "/health"
++    try:
++        with request.urlopen(url, timeout=timeout_s) as resp:
++            body = json.loads(resp.read().decode("utf-8"))
++    except (OSError, ValueError) as e:
++        return False, (f"API model tidak bisa dihubungi di {url} ({e.__class__.__name__}). "
++                       "Jalankan dulu: python -m uvicorn ml.api:app --port 9000")
++    chosen = architecture or body.get("architecture")
++    info = (body.get("architectures") or {}).get(chosen) or {"status": body.get("status"),
++                                                              "missing_files": body.get("missing_files", [])}
++    if info.get("status") != "ready":
++        missing = ", ".join(info.get("missing_files") or []) or "tidak diketahui"
++        return False, f"Model {chosen} belum siap di API (file hilang: {missing}). Salin file model ke folder models/."
++    return True, f"API model siap ({chosen})"
+diff --git a/docs/INTEGRASI.md b/docs/INTEGRASI.md
+new file mode 100644
+index 0000000..0dbd145
+--- /dev/null
++++ b/docs/INTEGRASI.md
+@@ -0,0 +1,54 @@
++# Runbook integrasi model + hardware
++
++Tujuan: satu tomat diletakkan di stasiun foto, IR memicu `DETECT`, webcam memotret, API model memberi grade, firmware menggerakkan servo ke jalur yang benar. Uji **bertahap**; jangan lanjut ke tahap berikut sebelum tahap sebelumnya lolos.
++
++## Prasyarat
++
++| Item | Cara |
++|---|---|
++| Firmware protokol v0.3 | Upload `firmware/tomato_sorter/tomato_sorter.ino` dari repo ini. Sketch lama (perintah `1/2/3`, `busuk/setengah/matang`, log `[IR_DETECTED]`) **tidak** kompatibel dengan controller |
++| File model di `models/` | 4 file `*_resnext101.*` (dari Drive tim). Tidak masuk Git (lebih dari 100 MB) |
++| Foto latar kosong | `python -m tools.capture_dataset`, kosongkan stasiun, tekan `b` (menghasilkan `data/raw/background.jpg`) |
++| Port dan kamera laptop ini | `python -m tools.hardware_check`, lalu isi `config.local.yaml` (tidak masuk Git) |
++
++Pemetaan jalur (sama dengan `docs/PROTOCOL.md`): **A** = servo 3 (kematangan dan mulus terbaik), **B** = servo 2, **C** = jalur lurus (mentah atau cacat berat). Jangan memakai pemetaan lama `1=A=busuk`; itu terbalik terhadap rubrik.
++
++## Tahap 1: firmware dan serial (tanpa kamera, tanpa model)
++
++1. Tutup Serial Monitor Arduino IDE (satu port hanya untuk satu program).
++2. `python -m tools.send_grade A` lalu taruh tomat di depan IR. Terminal menampilkan `DETECT`, `ACK`, `DONE`.
++3. Ulangi untuk `B` dan `C`. Periksa fisik: A masuk jalur servo 3, B servo 2, C lurus.
++
++Lulus bila ketiga jalur benar dan tidak ada `ERR`.
++
++## Tahap 2: API model
++
++```powershell
++python -m uvicorn ml.api:app --port 9000
++```
++
++Tunggu pesan warm-up selesai (server baru menerima permintaan setelah model termuat). `GET http://127.0.0.1:9000/health` harus `ready`. Uji `POST /predict` di Postman dengan satu foto tomat dan catat waktu respons.
++
++## Tahap 3: kamera dan vision
++
++`python -m tools.capture_dataset` untuk melihat gambar stasiun. Tomat harus terlihat utuh dan terang, kamera dan lampu tidak berubah posisi. Perubahan apa pun mewajibkan foto latar kosong baru.
++
++## Tahap 4: end-to-end
++
++Terminal 1: API model (tahap 2). Terminal 2: dashboard `python -m dashboard`. Terminal 3: `python -m controller.main`. Controller memeriksa API saat mulai dan berhenti dengan pesan jelas bila model belum siap.
++
++Taruh satu tomat. Urutan yang benar: `DETECT` -> jeda `settle_after_detect_s` -> foto -> `GRADE` -> `ACK` -> `DONE` -> `READY`. Hasil dan foto muncul di dashboard.
++
++## Anggaran waktu
++
++Firmware menunggu `GRADE` paling lama `WAKTU_TUNGGU_GRADE` (15 s). Pemakaian waktu per tomat: `settle_after_detect_s` + ambil frame + segmentasi + HTTP prediksi (sekitar 0,7 s sampai 1,3 s hanya untuk model di CPU Colab; ukur di laptop ini). Bila total mendekati batas, naikkan `WAKTU_TUNGGU_GRADE` atau percepat salah satu langkah. Setelah terukur, isi `timeouts_s.grade_wait` di `config.yaml`.
++
++## Masalah umum
++
++| Gejala | Penyebab | Tindakan |
++|---|---|---|
++| `could not open port COMx` | Port dipakai program lain atau salah | Tutup Serial Monitor; jalankan `tools.hardware_check` |
++| `ERR,<id>,GRADE_TIMEOUT` | PC tidak membalas | Lihat terminal controller: API mati, tomat tidak valid di gambar, atau waktu melebihi batas |
++| Hampir semua tomat menjadi C | Head defect di foto primer menandai tomat sehat sebagai reject (recall healthy sekitar 49%) | Masalah model, bukan integrasi; ditangani saat dataset diganti |
++| Controller berhenti dengan pesan "API model" | API belum jalan atau file model hilang | Jalankan tahap 2 |
++| `DONE` muncul tapi tomat tidak masuk wadah | `DONE` hanya berarti waktu tempuh habis | Kalibrasi `WAKTU_TEMPUH_*` di firmware |
+diff --git a/ml/api.py b/ml/api.py
+index e7b82a2..21bfe90 100644
+--- a/ml/api.py
++++ b/ml/api.py
+@@ -4,7 +4,9 @@ from __future__ import annotations
+ 
+ import io
+ import json
++import logging
+ import os
++from contextlib import asynccontextmanager
+ from functools import lru_cache
+ from pathlib import Path
+ from typing import Any
+@@ -33,11 +35,39 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
+ DEFAULT_MODELS_DIR = Path(os.environ.get("TOMATO_MODELS_DIR", "models"))
+ ARCHITECTURE_PATTERN = "^(" + "|".join(sorted(ARCHITECTURES)) + ")$"
+ pillow_heif.register_heif_opener()
++logger = logging.getLogger("uvicorn.error")
++
++
++def warm_up(models_dir: Path | None = None, architecture: str | None = None) -> bool:
++    """Muat model dan jalankan satu prediksi kosong agar tomat pertama tidak menunggu pemuatan model.
++
++    Tanpa ini, permintaan nyata pertama memuat model (puluhan detik di CPU) dan bisa melewati batas
++    firmware menunggu GRADE (ERR GRADE_TIMEOUT). Kegagalan tidak menghentikan server: /health tetap
++    melaporkan model yang belum siap.
++    """
++    directory = DEFAULT_MODELS_DIR if models_dir is None else models_dir
++    try:
++        chosen = architecture or _default_architecture()
++        predict_image(Image.new("RGB", INPUT_SIZE, (128, 128, 128)), directory, chosen)
++    except Exception as exc:  # noqa: BLE001 - server harus tetap hidup agar /health bisa menjelaskan masalahnya
++        logger.warning("Warm-up model dilewati: %s", exc)
++        return False
++    logger.info("Warm-up model selesai (%s).", chosen)
++    return True
++
++
++@asynccontextmanager
++async def lifespan(_app: FastAPI):
++    if os.environ.get("TOMATO_WARMUP", "1") != "0":
++        warm_up()  # server baru menerima permintaan setelah ini selesai
++    yield
++
+ 
+ app = FastAPI(
+     title="Tomato Sorter ML API",
+-    version="1.1.0",
++    version="1.2.0",
+     description="ResNeXt-50/101 predictions for tomato ripeness, visible defects, and grade.",
++    lifespan=lifespan,
+ )
+ 
+ 
+diff --git a/requirements.txt b/requirements.txt
+index 71befc7..91b3be4 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -19,3 +19,4 @@ pillow-heif>=0.13
+ # Dashboard:
+ sqlalchemy>=2.0,<3
+ httpx                    # Gemini API, tes dashboard (TestClient), dan klien controller
++python-dotenv>=1.0       # dashboard membaca GEMINI_API_KEY dari .env di root proyek
+diff --git a/tests/test_integrasi_hardware.py b/tests/test_integrasi_hardware.py
+new file mode 100644
+index 0000000..230688e
+--- /dev/null
++++ b/tests/test_integrasi_hardware.py
+@@ -0,0 +1,118 @@
++import io
++import json
++
++import pytest
++
++from controller import ml_client
++from controller.config import load_config
++from controller.main import validate_config
++from tools.hardware_check import format_report
++
++
++# ---- config.local.yaml ----
++def test_local_config_overrides_only_given_keys(tmp_path):
++    (tmp_path / "config.yaml").write_text("serial:\n  port: COM3\n  baudrate: 115200\ncamera:\n  index: 0\n")
++    (tmp_path / "config.local.yaml").write_text("serial:\n  port: COM7\ncamera:\n  index: 1\n")
++
++    cfg = load_config(tmp_path / "config.yaml")
++
++    assert cfg["serial"] == {"port": "COM7", "baudrate": 115200}
++    assert cfg["camera"]["index"] == 1
++
++
++def test_config_without_local_file_is_unchanged(tmp_path):
++    (tmp_path / "config.yaml").write_text("serial:\n  port: COM3\n")
++
++    assert load_config(tmp_path / "config.yaml") == {"serial": {"port": "COM3"}}
++
++
++def test_empty_local_file_is_ignored_and_non_mapping_is_rejected(tmp_path):
++    (tmp_path / "config.yaml").write_text("a: 1\n")
++    (tmp_path / "config.local.yaml").write_text("")
++    assert load_config(tmp_path / "config.yaml") == {"a": 1}
++
++    (tmp_path / "config.local.yaml").write_text("- bukan\n- pemetaan\n")
++    with pytest.raises(ValueError):
++        load_config(tmp_path / "config.yaml")
++
++
++def test_repo_config_loads_with_numeric_settle():
++    cfg = load_config()
++    validate_config(cfg)  # tidak boleh melempar: `1.0.` (string) dulu lolos null-check tapi merusak time.sleep
++
++
++# ---- validate_config ----
++@pytest.mark.parametrize("bad", ["1.0.", "satu", True, -1])
++def test_validate_config_rejects_non_numeric_or_negative_settle(bad):
++    with pytest.raises(SystemExit):
++        validate_config({"capture": {"settle_after_detect_s": bad}})
++
++
++@pytest.mark.parametrize("good", [0, 1, 1.5])
++def test_validate_config_accepts_numbers(good):
++    validate_config({"capture": {"settle_after_detect_s": good}})
++
++
++# ---- check_api ----
++class _Resp(io.BytesIO):
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *exc):
++        return False
++
++
++def _serve(monkeypatch, body):
++    monkeypatch.setattr(ml_client.request, "urlopen", lambda url, timeout=0: _Resp(json.dumps(body).encode()))
++
++
++def test_check_api_ready_for_requested_architecture(monkeypatch):
++    _serve(monkeypatch, {"architecture": "resnext101", "status": "ready",
++                         "architectures": {"resnext101": {"status": "ready", "missing_files": []},
++                                           "resnext50": {"status": "model_missing", "missing_files": ["x"]}}})
++
++    ok, message = ml_client.check_api("http://127.0.0.1:9000", "resnext101")
++
++    assert ok and "resnext101" in message
++
++
++def test_check_api_reports_missing_model_files(monkeypatch):
++    _serve(monkeypatch, {"architecture": "resnext101", "status": "ready",
++                         "architectures": {"resnext50": {"status": "model_missing",
++                                                         "missing_files": ["ripeness_resnext50.keras"]}}})
++
++    ok, message = ml_client.check_api("http://127.0.0.1:9000", "resnext50")
++
++    assert not ok and "ripeness_resnext50.keras" in message
++
++
++def test_check_api_uses_server_default_when_architecture_is_null(monkeypatch):
++    _serve(monkeypatch, {"architecture": "resnext101", "status": "ready",
++                         "architectures": {"resnext101": {"status": "ready", "missing_files": []}}})
++
++    assert ml_client.check_api("http://127.0.0.1:9000", None)[0] is True
++
++
++def test_check_api_unreachable(monkeypatch):
++    def boom(url, timeout=0):
++        raise OSError("refused")
++
++    monkeypatch.setattr(ml_client.request, "urlopen", boom)
++
++    ok, message = ml_client.check_api("http://127.0.0.1:9000")
++
++    assert not ok and "uvicorn ml.api:app" in message
++
++
++# ---- hardware_check ----
++def test_format_report_suggests_first_detected_devices():
++    text = format_report([("COM5", "USB-SERIAL CH340")], [(1, (640, 480))])
++
++    assert "COM5" in text and "indeks 1" in text and "config.local.yaml" in text
++    assert "port: COM5" in text and "index: 1" in text
++
++
++def test_format_report_handles_no_devices():
++    text = format_report([], [])
++
++    assert "tidak ada" in text and "port: COM3" in text and "index: 0" in text
+diff --git a/tests/test_ml_api.py b/tests/test_ml_api.py
+index 19eb26c..8e3e586 100644
+--- a/tests/test_ml_api.py
++++ b/tests/test_ml_api.py
+@@ -121,3 +121,30 @@ def test_health_reports_each_architecture(monkeypatch, tmp_path):
+     assert body["architectures"]["resnext101"]["status"] == "model_missing"
+     assert body["architecture"] == "resnext101"
+     assert body["status"] == "model_missing"
++
++
++def test_warm_up_returns_false_when_models_are_missing(tmp_path):
++    assert api.warm_up(tmp_path, "resnext101") is False
++
++
++def test_warm_up_runs_one_prediction_for_the_default_architecture(monkeypatch, tmp_path):
++    seen = {}
++    monkeypatch.setenv("TOMATO_ARCHITECTURE", "resnext50")
++    monkeypatch.setattr(api, "predict_image", lambda image, models_dir, architecture: seen.update(a=architecture))
++
++    assert api.warm_up(tmp_path) is True
++    assert seen["a"] == "resnext50"
++
++
++def test_server_startup_runs_warm_up_unless_disabled(monkeypatch):
++    calls = []
++    monkeypatch.setattr(api, "warm_up", lambda *a, **k: calls.append(1))
++
++    with TestClient(api.app):
++        pass
++    assert calls == [1]
++
++    monkeypatch.setenv("TOMATO_WARMUP", "0")
++    with TestClient(api.app):
++        pass
++    assert calls == [1]
+diff --git a/tools/hardware_check.py b/tools/hardware_check.py
+new file mode 100644
+index 0000000..a0bb5d2
+--- /dev/null
++++ b/tools/hardware_check.py
+@@ -0,0 +1,56 @@
++"""Cek perangkat di laptop ini: port serial dan indeks kamera.
++
++Jalankan:  python -m tools.hardware_check
++Port dan indeks kamera berbeda di tiap laptop. Hasilnya dipakai untuk mengisi config.local.yaml
++(file lokal, tidak masuk Git), bukan config.yaml.
++"""
++from __future__ import annotations
++
++
++def list_serial_ports() -> list[tuple[str, str]]:
++    from serial.tools import list_ports
++
++    return [(p.device, p.description) for p in sorted(list_ports.comports(), key=lambda p: p.device)]
++
++
++def probe_cameras(max_index: int = 4) -> list[tuple[int, tuple[int, int]]]:
++    """Indeks kamera yang bisa dibuka dan memberi frame, beserta resolusinya (lebar, tinggi)."""
++    import cv2
++
++    found = []
++    for index in range(max_index + 1):
++        cap = cv2.VideoCapture(index)
++        try:
++            if cap.isOpened():
++                ok, frame = cap.read()
++                if ok and frame is not None:
++                    found.append((index, (frame.shape[1], frame.shape[0])))
++        finally:
++            cap.release()
++    return found
++
++
++def format_report(ports: list[tuple[str, str]], cameras: list[tuple[int, tuple[int, int]]]) -> str:
++    lines = ["Port serial:"]
++    lines += [f"  {device}  - {desc}" for device, desc in ports] or ["  (tidak ada; colok USB ESP32 lalu jalankan ulang)"]
++    lines += ["", "Kamera:"]
++    lines += [f"  indeks {i}  - {w}x{h}" for i, (w, h) in cameras] or ["  (tidak ada kamera yang bisa dibuka)"]
++    lines += [
++        "",
++        "Isi config.local.yaml (di folder yang sama dengan config.yaml) dengan nilai laptop ini, misalnya:",
++        "  serial:",
++        f"    port: {ports[0][0] if ports else 'COM3'}",
++        "  camera:",
++        f"    index: {cameras[0][0] if cameras else 0}",
++        "Catatan: webcam bawaan laptop biasanya indeks 0; webcam USB eksternal sering indeks 1.",
++        "Tutup Arduino IDE Serial Monitor sebelum menjalankan controller (satu port hanya bisa dipakai satu program).",
++    ]
++    return "\n".join(lines)
++
++
++def main() -> None:
++    print(format_report(list_serial_ports(), probe_cameras()))
++
++
++if __name__ == "__main__":
++    main()

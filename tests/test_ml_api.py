@@ -121,3 +121,30 @@ def test_health_reports_each_architecture(monkeypatch, tmp_path):
     assert body["architectures"]["resnext101"]["status"] == "model_missing"
     assert body["architecture"] == "resnext101"
     assert body["status"] == "model_missing"
+
+
+def test_warm_up_returns_false_when_models_are_missing(tmp_path):
+    assert api.warm_up(tmp_path, "resnext101") is False
+
+
+def test_warm_up_runs_one_prediction_for_the_default_architecture(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setenv("TOMATO_ARCHITECTURE", "resnext50")
+    monkeypatch.setattr(api, "predict_image", lambda image, models_dir, architecture: seen.update(a=architecture))
+
+    assert api.warm_up(tmp_path) is True
+    assert seen["a"] == "resnext50"
+
+
+def test_server_startup_runs_warm_up_unless_disabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(api, "warm_up", lambda *a, **k: calls.append(1))
+
+    with TestClient(api.app):
+        pass
+    assert calls == [1]
+
+    monkeypatch.setenv("TOMATO_WARMUP", "0")
+    with TestClient(api.app):
+        pass
+    assert calls == [1]

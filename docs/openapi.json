@@ -1,0 +1,1376 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tomato Sorter Dashboard",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/ingest/tomatoes": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Hasil model untuk satu tomat",
+        "operationId": "ingest_tomato_api_ingest_tomatoes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TomatoIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TomatoOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/firmware": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Pesan firmware (protokol v0.3)",
+        "operationId": "ingest_firmware_api_ingest_firmware_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirmwareMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/events": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Log dari controller, firmware, atau API model",
+        "operationId": "ingest_event_api_ingest_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/status": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Heartbeat controller",
+        "operationId": "ingest_status_api_ingest_status_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/frame": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Satu frame kamera (body = JPEG mentah)",
+        "operationId": "ingest_frame_api_ingest_frame_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/overview": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Overview",
+        "operationId": "overview_api_overview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tomatoes": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Tomatoes",
+        "operationId": "tomatoes_api_tomatoes_get",
+        "parameters": [
+          {
+            "name": "grade",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A, B, atau C",
+              "title": "Grade"
+            },
+            "description": "A, B, atau C"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TomatoPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tomatoes/{tomato_id}": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Tomato",
+        "operationId": "tomato_api_tomatoes__tomato_id__get",
+        "parameters": [
+          {
+            "name": "tomato_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tomato Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TomatoOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tomatoes/{tomato_id}/image": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Tomato Image",
+        "operationId": "tomato_image_api_tomatoes__tomato_id__image_get",
+        "parameters": [
+          {
+            "name": "tomato_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tomato Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Events",
+        "operationId": "events_api_events_get",
+        "parameters": [
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(INFO|WARN|ERROR)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventOut"
+                  },
+                  "title": "Response Events Api Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/export.csv": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Export Csv",
+        "operationId": "export_csv_api_export_csv_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/frame": {
+      "get": {
+        "tags": [
+          "camera"
+        ],
+        "summary": "Satu frame terbaru (JPEG)",
+        "operationId": "frame_api_frame_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream": {
+      "get": {
+        "tags": [
+          "camera"
+        ],
+        "summary": "Stream MJPEG (multipart/x-mixed-replace)",
+        "operationId": "stream_stream_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat Post",
+        "operationId": "chat_post_api_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chat/{session_id}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat History",
+        "operationId": "chat_history_api_chat__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChatMessageOut"
+                  },
+                  "title": "Response Chat History Api Chat  Session Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatIn": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{8,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ChatIn"
+      },
+      "ChatMessageOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "waktu": {
+            "type": "string",
+            "title": "Waktu"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "content",
+          "waktu"
+        ],
+        "title": "ChatMessageOut"
+      },
+      "ChatOut": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "reply": {
+            "type": "string",
+            "title": "Reply"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "reply"
+        ],
+        "title": "ChatOut"
+      },
+      "ClassResult": {
+        "properties": {
+          "class": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Class"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "class",
+          "confidence"
+        ],
+        "title": "ClassResult",
+        "description": "Bentuk sama dengan `ripeness` / `defect` pada respons POST /predict di ml/api.py (field lain diabaikan)."
+      },
+      "DeviceStateOut": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "firmware_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Id"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "serial_ok": {
+            "type": "boolean",
+            "title": "Serial Ok"
+          },
+          "camera_ok": {
+            "type": "boolean",
+            "title": "Camera Ok"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated",
+            "description": "Epoch detik pesan terakhir dari controller; null bila belum pernah"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "description": "True bila controller tidak memberi kabar lebih lama dari dashboard.stale_after_s"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "firmware_id",
+          "message",
+          "serial_ok",
+          "camera_ok",
+          "updated",
+          "stale"
+        ],
+        "title": "DeviceStateOut"
+      },
+      "EventIn": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "INFO",
+              "WARN",
+              "ERROR"
+            ],
+            "title": "Level"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "controller",
+              "firmware",
+              "api"
+            ],
+            "title": "Source"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "source",
+          "message"
+        ],
+        "title": "EventIn"
+      },
+      "EventOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "waktu": {
+            "type": "string",
+            "title": "Waktu"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "INFO",
+              "WARN",
+              "ERROR"
+            ],
+            "title": "Level"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "controller",
+              "firmware",
+              "api"
+            ],
+            "title": "Source"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "waktu",
+          "level",
+          "source",
+          "message"
+        ],
+        "title": "EventOut"
+      },
+      "FirmwareMessage": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "DETECT",
+              "ACK",
+              "DONE",
+              "ERR"
+            ],
+            "title": "Type"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Z_]{1,32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "FirmwareMessage",
+        "description": "Pesan firmware apa adanya, sama dengan keluaran controller.protocol.parse_message."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Overview": {
+        "properties": {
+          "server_time": {
+            "type": "number",
+            "title": "Server Time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DeviceStateOut"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/StatsOut"
+          },
+          "last_tomato": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TomatoOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "has_frame": {
+            "type": "boolean",
+            "title": "Has Frame"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "server_time",
+          "state",
+          "stats",
+          "last_tomato",
+          "has_frame",
+          "settings"
+        ],
+        "title": "Overview"
+      },
+      "StatsOut": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "per_grade": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Per Grade"
+          },
+          "error_count": {
+            "type": "integer",
+            "title": "Error Count"
+          },
+          "avg_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Latency Ms"
+          },
+          "per_minute": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Per Minute",
+            "description": "Tomat per menit, terlama dulu; elemen terakhir = menit berjalan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "per_grade",
+          "error_count",
+          "avg_latency_ms",
+          "per_minute"
+        ],
+        "title": "StatsOut"
+      },
+      "StatusIn": {
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "READY",
+                  "DETECT",
+                  "GRADING",
+                  "ACK",
+                  "DONE",
+                  "ERR"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "firmware_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Id"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "serial_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial Ok"
+          },
+          "camera_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Camera Ok"
+          }
+        },
+        "type": "object",
+        "title": "StatusIn",
+        "description": "Heartbeat controller. Semua field opsional; yang kosong tidak mengubah nilai sebelumnya."
+      },
+      "TomatoIn": {
+        "properties": {
+          "firmware_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Id",
+            "description": "ID dari firmware (DETECT,<id>)"
+          },
+          "ripeness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClassResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClassResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grade": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ],
+            "title": "Grade"
+          },
+          "architecture": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Architecture"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "image_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Path",
+            "description": "Relatif terhadap akar proyek, harus di dalam data/"
+          },
+          "waktu": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waktu",
+            "description": "Bawaan: waktu server"
+          }
+        },
+        "type": "object",
+        "required": [
+          "grade"
+        ],
+        "title": "TomatoIn"
+      },
+      "TomatoOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "firmware_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Id"
+          },
+          "waktu": {
+            "type": "string",
+            "title": "Waktu"
+          },
+          "image_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Path"
+          },
+          "ripeness_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ripeness Class"
+          },
+          "ripeness_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ripeness Confidence"
+          },
+          "defect_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect Class"
+          },
+          "defect_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect Confidence"
+          },
+          "grade": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ],
+            "title": "Grade"
+          },
+          "architecture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Architecture"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "serial_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ACK",
+                  "DONE",
+                  "ERR"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "firmware_id",
+          "waktu",
+          "image_path",
+          "ripeness_class",
+          "ripeness_confidence",
+          "defect_class",
+          "defect_confidence",
+          "grade",
+          "architecture",
+          "latency_ms",
+          "serial_status"
+        ],
+        "title": "TomatoOut"
+      },
+      "TomatoPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/TomatoOut"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "rows"
+        ],
+        "title": "TomatoPage"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

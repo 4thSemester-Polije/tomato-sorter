@@ -1,4 +1,8 @@
 # Semua parameter proyek. Nilai null = BELUM DIUKUR, isi setelah kalibrasi.
+# Nilai yang berbeda per laptop (port serial, indeks kamera) JANGAN diubah di sini: buat file
+# config.local.yaml di folder ini (tidak masuk Git), isi hanya yang berbeda. Contoh:
+#   serial: {port: COM5}
+#   camera: {index: 1}
 serial:
   port: COM3            # Windows: COMx | Linux: /dev/ttyUSB0 | macOS: /dev/tty.usbserial-xxx
   baudrate: 115200
@@ -11,7 +15,7 @@ camera:
   flush_frames: 5       # buang frame lama dari buffer webcam sebelum mengambil gambar
 
 capture:
-  settle_after_detect_s: null   # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
+  settle_after_detect_s: 1.0    # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
 
 rubric:                 # lihat docs/RUBRIK.md
   red_ripe_min_pct: 60      # tingkat 1 bila merah >= nilai ini (acuan USDA)
@@ -32,3 +36,25 @@ paths:
   features_csv: data/features.csv
   debug_dir: data/debug
   models_dir: models
+
+dashboard:                      # lihat dashboard/README.md
+  host: 127.0.0.1               # 0.0.0.0 = bisa dibuka dari HP/PC lain di jaringan yang sama (tanpa login!)
+  port: 8000
+  url: http://127.0.0.1:8000    # alamat dashboard yang dipakai controller untuk mengirim data
+  database: data/tomato.db
+  stream_fps: 10                # batas kecepatan stream MJPEG ke browser
+  max_frame_bytes: 2000000
+  stale_after_s: 10             # status dianggap usang bila controller tidak memberi kabar selama ini
+  history_page_size: 25
+  throughput_window_min: 15
+  chat:                         # kunci API: environment GEMINI_API_KEY (hanya di server)
+    model: gemini-3.6-flash
+    max_tokens: 1000
+    max_tool_rounds: 5
+    history_messages: 20
+    max_per_minute: 20
+
+ml:                             # opsional: controller memanggil ml/api.py (uvicorn ml.api:app) untuk klasifikasi gambar
+  api_url: http://127.0.0.1:9000  # jalankan dulu: python -m uvicorn ml.api:app --port 9000 ; null = pakai ml/predict.py (fitur)
+  architecture: resnext101      # resnext50 | resnext101 | null (bawaan server)
+  timeout_s: 10

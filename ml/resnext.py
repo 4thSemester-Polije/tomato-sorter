@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import posixpath
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 INPUT_SIZE = (224, 224)
 ARCHITECTURES = {
@@ -67,12 +70,54 @@ def get_preprocess_input(architecture: str = DEFAULT_ARCHITECTURE) -> Any:
     return preprocess_input
 
 
+@contextmanager
+def posix_keras_paths(tf: Any, enabled: bool | None = None) -> Iterator[None]:
+    """Make Keras 2.15 weight-store paths use '/' on Windows while a model loads.
+
+    Keras 2.15 builds the HDF5 group paths inside a ``.keras`` archive with
+    ``tf.io.gfile.join``, which is ``os.path.join`` and therefore uses ``\\`` on
+    Windows. A ``.keras`` file written on Linux (Google Colab) stores them with
+    ``/``, so on Windows every nested layer (the ResNeXt backbone) is looked up
+    under a name that does not exist and loads as empty. The error is
+    ``Layer 'bn_data' expected 3 variables, but received 0 variables``.
+    Absolute paths (temporary directories) keep the native behaviour.
+    """
+    if enabled is None:
+        enabled = os.name == "nt"
+    if not enabled:
+        yield
+        return
+
+    modules = []
+    for candidate in (tf.io.gfile, tf.compat.v2.io.gfile):
+        if all(candidate is not seen for seen, _ in modules):
+            modules.append((candidate, candidate.join))
+
+    def make_join(original: Any) -> Any:
+        def join(path: Any, *paths: Any) -> Any:
+            text = os.fspath(path) if not isinstance(path, (str, bytes)) else path
+            if isinstance(text, bytes) or "://" in text[1:] or os.path.isabs(text):
+                return original(path, *paths)
+            return posixpath.join(text, *paths)
+
+        return join
+
+    for module, original in modules:
+        module.join = make_join(original)
+    try:
+        yield
+    finally:
+        for module, original in modules:
+            module.join = original
+
+
 def load_trusted_model(path: str | Path) -> Any:
     """Load a project-generated Keras artifact with its trusted Lambda layers."""
     # Memuat dependensi lengkap (termasuk image-classifiers) seperti sebelumnya,
     # karena backbone ResNeXt berisi layer Lambda dari pustaka tersebut.
     tf, _, _ = _keras_dependencies(DEFAULT_ARCHITECTURE)
-    return tf.keras.models.load_model(path, safe_mode=False)
+    with posix_keras_paths(tf):
+        return tf.keras.models.load_model(path, safe_mode=False)
 
 
 def create_model(
