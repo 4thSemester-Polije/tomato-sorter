@@ -33,20 +33,21 @@ export default function StatusBar({ live }) {
       role="status"
       aria-live="polite"
     >
-      {" "}
-      <div>
-        <h1>Tomato Sorter</h1>{" "}
-        <p className="muted">Pemilah tomat otomatis</p>{" "}
-      </div>{" "}
       <div className="brand">
-        {" "}
         <span className="logo" aria-hidden="true">
           🍅
-        </span>{" "}
+        </span>
         <div>
-          <h1>Tomato Sorter</h1>{" "}
-          <p className="muted">Pemilah tomat otomatis</p>{" "}
-        </div>{" "}
+          <h1>Tomato Sorter</h1>
+          <p className="muted">SMART SORTING · LIVE MONITOR</p>
+        </div>
+      </div>
+      <div className="status-main">
+        <span className="dot" />
+        <div>
+          <strong>{title}</strong>
+          {sub && <span className="status-sub">{sub}</span>}
+        </div>
       </div>
       <ul className="pills">
         <li className={state?.serial_ok && !state?.stale ? "pill on" : "pill"}>

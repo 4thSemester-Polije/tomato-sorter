@@ -7,7 +7,7 @@ export default function EventLog({ events }) {
   const [filter, setFilter] = useState("SEMUA");
   const shown = events.filter((e) => filter === "SEMUA" || (filter === "WARN" ? e.level !== "INFO" : e.level === "ERROR"));
   return (
-    <section className="card">
+    <section className="card events-card">
       <div className="card-head">
         <h2>Log</h2>
         <div className="seg" role="group" aria-label="Filter log">
