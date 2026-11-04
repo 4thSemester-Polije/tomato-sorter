@@ -9,7 +9,7 @@ Dashboard web: status alat, kamera langsung, hasil grade, log, riwayat, dan chat
 | Kamera | MJPEG `GET /stream` (`multipart/x-mixed-replace`) |
 | Data langsung | WebSocket `/ws` (hasil, log, status, statistik) |
 | Frontend | React + Vite (`dashboard/frontend/`), kontrak lewat `docs/openapi.json` |
-| Chatbot | Gemini API dari backend, tool calling ke 4 fungsi read-only |
+| Chatbot | Gemini API dari backend, tool calling ke 4 fungsi read-only; menjelaskan arti kode error, kemungkinan penyebab, dan langkah pemeriksaan tanpa mengklaim dugaan sebagai fakta |
 
 ## Prinsip arsitektur
 

@@ -488,3 +488,18 @@ def test_chat_tools_are_read_only_and_clamped(tmp_path):
     assert "error" in run_tool(S, "grade_summary", "bukan objek")
     assert run_tool(S, "grade_summary", {})["total"] == 30  # tabel masih utuh
     assert all(set(t["input_schema"]["properties"]) <= {"since_minutes", "limit"} for t in TOOLS)
+
+
+def test_recent_errors_explains_firmware_timeout_without_claiming_root_cause(tmp_path):
+    with TestClient(make_app(tmp_path)) as c:
+        fw(c, type="ERR", id=2, code="GRADE_TIMEOUT")
+
+    from dashboard.db import make_session_factory
+    S = make_session_factory(tmp_path / "t.db")
+    error = run_tool(S, "recent_errors", {})["errors"][0]
+
+    assert error["message"] == "ERR GRADE_TIMEOUT pada tomat #2"
+    assert "tidak menerima perintah GRADE" in error["explanation"]["meaning"]
+    assert any("Controller" in cause for cause in error["explanation"]["possible_causes"])
+    assert any("terminal controller" in check for check in error["explanation"]["next_checks"])
+    assert "belum dapat dipastikan" in error["explanation"]["certainty"]

@@ -8,7 +8,7 @@ export default function Stats({ stats, windowMin = 15 }) {
   const w = 100 / stats.per_minute.length;
   const rate = stats.per_minute.reduce((a, b) => a + b, 0) / stats.per_minute.length;
   return (
-    <section className="card">
+    <section className="card stats-card">
       <h2>Ringkasan</h2>
       <div className="totals">
         <div><span className="num">{stats.total}</span><span className="muted">tomat</span></div>

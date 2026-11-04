@@ -90,22 +90,17 @@ export default function ChatPanel() {
       <div className="chat-log" aria-live="polite">
         {messages.length === 0 && (
           <>
-            +{" "}
             <div className="bubble assistant">
               Halo! Saya bisa menjawab soal hasil sortir, grade, dan error alat.
               Pilih pertanyaan di bawah atau ketik sendiri.
             </div>
-            +{" "}
             <div className="chips">
-              +{" "}
               {SUGGESTIONS.map((s) => (
                 <button key={s} className="chip" onClick={() => ask(s)}>
                   {s}
                 </button>
               ))}
-              +{" "}
             </div>
-            +{" "}
           </>
         )}
 

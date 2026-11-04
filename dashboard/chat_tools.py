@@ -4,6 +4,7 @@ LLM tidak pernah menulis SQL dan tidak punya jalur apa pun ke mesin.
 """
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -34,7 +35,10 @@ TOOLS = [
     },
     {
         "name": "recent_errors",
-        "description": "Log berlevel ERROR terbaru dari controller, firmware, atau API.",
+        "description": (
+            "Log ERROR terbaru beserta arti kode yang diketahui, kemungkinan penyebab, dan pemeriksaan berikutnya. "
+            "Bedakan arti kode yang pasti dari kemungkinan penyebab."
+        ),
         "input_schema": {"type": "object", "properties": {"limit": {**_LIMIT, "description": "Default 10"}}},
     },
     {
@@ -43,6 +47,67 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {"since_minutes": _SINCE}},
     },
 ]
+
+_ERROR_EXPLANATIONS = {
+    "GRADE_TIMEOUT": {
+        "meaning": "Firmware tidak menerima perintah GRADE dari controller sebelum batas waktu menunggu habis.",
+        "possible_causes": [
+            "Controller tidak berjalan, berhenti merespons, atau sedang memproses terlalu lama.",
+            "Kamera/gambar gagal diproses atau tidak menghasilkan objek tomat yang valid.",
+            "Layanan model tidak tersedia atau klasifikasi terlalu lama.",
+            "Komunikasi serial USB terputus atau controller memakai port/baud rate yang salah.",
+        ],
+        "next_checks": [
+            "Periksa terminal controller pada waktu error untuk pesan kamera, segmentasi, atau API model.",
+            "Pastikan controller berjalan dan panel Kamera menerima frame.",
+            "Pastikan API model aktif jika konfigurasi ml.api_url digunakan.",
+            "Periksa kabel, port COM, baud rate, dan urutan pesan DETECT lalu GRADE.",
+        ],
+    },
+    "BUSY": {
+        "meaning": "Firmware menerima GRADE saat tidak sedang menunggu grade, atau ID pada GRADE berbeda dari ID tomat yang ditunggu.",
+        "possible_causes": [
+            "ID tomat di pesan GRADE tidak cocok dengan DETECT terakhir.",
+            "Pesan GRADE terlambat atau dikirim lebih dari sekali.",
+        ],
+        "next_checks": [
+            "Bandingkan ID pada DETECT dan GRADE di log serial.",
+            "Periksa apakah firmware baru saja timeout atau menyelesaikan siklus sebelumnya.",
+        ],
+    },
+    "BAD_CMD": {
+        "meaning": "Firmware menerima perintah serial yang tidak dikenal atau formatnya tidak sesuai protokol.",
+        "possible_causes": [
+            "Format pesan, pemisah koma, grade, atau akhiran baris tidak sesuai.",
+            "Ada teks debug/perintah dari perangkat lain pada jalur serial.",
+        ],
+        "next_checks": [
+            "Periksa data serial yang dikirim; format grade otomatis adalah GRADE,<id>,<A|B|C>.",
+            "Pastikan baud rate controller dan firmware sama.",
+        ],
+    },
+    "JAM": {
+        "meaning": "Firmware melaporkan masalah pada fase gerak dan menghentikan konveyor serta menutup gate.",
+        "possible_causes": [
+            "Ada hambatan mekanis atau aktuator tidak bergerak sesuai waktu yang diharapkan.",
+        ],
+        "next_checks": [
+            "Periksa konveyor, pusher, servo, dan catu daya sebelum menjalankan ulang.",
+            "Cari pesan serial sebelum ERR untuk mengetahui fase gerak yang gagal.",
+        ],
+    },
+    "NO_ARRIVAL": {
+        "meaning": "Firmware melaporkan tomat tidak tiba di tujuan.",
+        "possible_causes": [
+            "Tomat tersangkut atau waktu tempuh/jalur belum dikalibrasi.",
+            "Kode ini masih cadangan protokol dan belum tentu didukung sensor konfirmasi.",
+        ],
+        "next_checks": [
+            "Periksa jalur konveyor dan kalibrasi waktu tempuh.",
+            "Pastikan firmware benar-benar memiliki sensor kedatangan sebelum menganggap ini terdeteksi otomatis.",
+        ],
+    },
+}
 
 
 def _int(args: dict, key: str, default, lo: int, hi: int):
@@ -75,7 +140,30 @@ def latest_tomatoes(session: Session, args: dict) -> dict:
 def recent_errors(session: Session, args: dict) -> dict:
     limit = _int(args, "limit", 10, 1, MAX_ROWS)
     rows = session.scalars(select(Event).where(Event.level == "ERROR").order_by(Event.id.desc()).limit(limit)).all()
-    return {"errors": [EventOut.model_validate(r).model_dump(mode="json") for r in rows]}
+    errors = []
+    for row in rows:
+        error = EventOut.model_validate(row).model_dump(mode="json")
+        code = next(
+            (name for name in _ERROR_EXPLANATIONS if re.search(rf"\b{re.escape(name)}\b", row.message)),
+            None,
+        )
+        if code:
+            explanation = {
+                **_ERROR_EXPLANATIONS[code],
+                "certainty": "Arti kode diketahui; penyebab spesifik belum dapat dipastikan dari log ini saja.",
+            }
+        else:
+            explanation = {
+                "meaning": f"Log mencatat error dari {row.source}: {row.message}.",
+                "possible_causes": [],
+                "next_checks": [
+                    "Periksa log/terminal sumber error pada waktu yang sama untuk mendapatkan pesan yang lebih rinci."
+                ],
+                "certainty": "Penyebab spesifik tidak dapat dipastikan dari pesan log yang tersedia.",
+            }
+        error["explanation"] = explanation
+        errors.append(error)
+    return {"errors": errors}
 
 
 def average_latency(session: Session, args: dict) -> dict:
