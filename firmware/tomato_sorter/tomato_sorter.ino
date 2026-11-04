@@ -22,7 +22,7 @@
 #define SERVO_MATANG_PIN   23   // gate grade A (servo 3)
 
 // ================= PENGATURAN KONVEYOR & SENSOR =================
-#define KECEPATAN_KONVEYOR 255   // 0 - 255
+#define KECEPATAN_KONVEYOR 200   // 0 - 255. Waktu tempuh jalur berbasis waktu, jadi kecepatan harus sama dengan saat WAKTU_TEMPUH_* dikalibrasi
 #define IR_AKTIF_LEVEL     LOW   // Ganti ke HIGH jika sensor IR aktif HIGH saat ada objek
 #define TES_MOTOR_AWAL     true  // true = motor berputar 2 detik saat startup untuk tes wiring
 #define IR_DEBOUNCE_MS     50    // Sensor harus aktif minimal sekian ms agar dianggap buah

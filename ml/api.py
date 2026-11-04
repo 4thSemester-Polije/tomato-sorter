@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -33,11 +35,39 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_MODELS_DIR = Path(os.environ.get("TOMATO_MODELS_DIR", "models"))
 ARCHITECTURE_PATTERN = "^(" + "|".join(sorted(ARCHITECTURES)) + ")$"
 pillow_heif.register_heif_opener()
+logger = logging.getLogger("uvicorn.error")
+
+
+def warm_up(models_dir: Path | None = None, architecture: str | None = None) -> bool:
+    """Muat model dan jalankan satu prediksi kosong agar tomat pertama tidak menunggu pemuatan model.
+
+    Tanpa ini, permintaan nyata pertama memuat model (puluhan detik di CPU) dan bisa melewati batas
+    firmware menunggu GRADE (ERR GRADE_TIMEOUT). Kegagalan tidak menghentikan server: /health tetap
+    melaporkan model yang belum siap.
+    """
+    directory = DEFAULT_MODELS_DIR if models_dir is None else models_dir
+    try:
+        chosen = architecture or _default_architecture()
+        predict_image(Image.new("RGB", INPUT_SIZE, (128, 128, 128)), directory, chosen)
+    except Exception as exc:  # noqa: BLE001 - server harus tetap hidup agar /health bisa menjelaskan masalahnya
+        logger.warning("Warm-up model dilewati: %s", exc)
+        return False
+    logger.info("Warm-up model selesai (%s).", chosen)
+    return True
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if os.environ.get("TOMATO_WARMUP", "1") != "0":
+        warm_up()  # server baru menerima permintaan setelah ini selesai
+    yield
+
 
 app = FastAPI(
     title="Tomato Sorter ML API",
-    version="1.1.0",
+    version="1.2.0",
     description="ResNeXt-50/101 predictions for tomato ripeness, visible defects, and grade.",
+    lifespan=lifespan,
 )
 
 
