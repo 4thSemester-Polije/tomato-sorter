@@ -30,3 +30,21 @@ def make_image_predictor(api_url: str, architecture: str | None = None, timeout_
         return result
 
     return predict
+
+
+def check_api(api_url: str, architecture: str | None = None, timeout_s: float = 5.0) -> tuple[bool, str]:
+    """Periksa GET /health sebelum controller mulai, supaya kegagalan terlihat sejak awal, bukan pada tomat pertama."""
+    url = api_url.rstrip("/") + "/health"
+    try:
+        with request.urlopen(url, timeout=timeout_s) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError) as e:
+        return False, (f"API model tidak bisa dihubungi di {url} ({e.__class__.__name__}). "
+                       "Jalankan dulu: python -m uvicorn ml.api:app --port 9000")
+    chosen = architecture or body.get("architecture")
+    info = (body.get("architectures") or {}).get(chosen) or {"status": body.get("status"),
+                                                              "missing_files": body.get("missing_files", [])}
+    if info.get("status") != "ready":
+        missing = ", ".join(info.get("missing_files") or []) or "tidak diketahui"
+        return False, f"Model {chosen} belum siap di API (file hilang: {missing}). Salin file model ke folder models/."
+    return True, f"API model siap ({chosen})"

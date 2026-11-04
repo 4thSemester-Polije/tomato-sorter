@@ -174,10 +174,15 @@ class Controller:
 
 
 def validate_config(cfg):
-    if cfg["capture"]["settle_after_detect_s"] is None:
+    settle = cfg["capture"]["settle_after_detect_s"]
+    if settle is None:
         raise SystemExit(
             "capture.settle_after_detect_s di config.yaml masih null. Ukur jeda tomat diam setelah DETECT, "
             "lalu isi nilainya (untuk uji awal boleh 1.0)."
+        )
+    if isinstance(settle, bool) or not isinstance(settle, (int, float)) or settle < 0:
+        raise SystemExit(
+            f"capture.settle_after_detect_s harus angka >= 0, bukan {settle!r}. Periksa salah ketik di config.yaml."
         )
 
 
@@ -186,7 +191,7 @@ def main():
 
     from controller.camera import Camera
     from controller.dashboard_client import DashboardClient
-    from controller.ml_client import make_image_predictor
+    from controller.ml_client import check_api, make_image_predictor
     from controller.serial_link import SerialLink
     from ml.predict import predict
 
@@ -203,6 +208,10 @@ def main():
     image_predict = None
     ml = cfg.get("ml") or {}
     if ml.get("api_url"):
+        ok, message = check_api(ml["api_url"], ml.get("architecture"))
+        if not ok:
+            raise SystemExit(message)
+        print(message)
         image_predict = make_image_predictor(ml["api_url"], ml.get("architecture"), ml.get("timeout_s", 10))
         print(f"Klasifikasi lewat API model: {ml['api_url']}")
 

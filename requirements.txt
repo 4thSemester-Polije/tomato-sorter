@@ -19,3 +19,4 @@ pillow-heif>=0.13
 # Dashboard:
 sqlalchemy>=2.0,<3
 httpx                    # Gemini API, tes dashboard (TestClient), dan klien controller
+python-dotenv>=1.0       # dashboard membaca GEMINI_API_KEY dari .env di root proyek

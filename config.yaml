@@ -1,4 +1,8 @@
 # Semua parameter proyek. Nilai null = BELUM DIUKUR, isi setelah kalibrasi.
+# Nilai yang berbeda per laptop (port serial, indeks kamera) JANGAN diubah di sini: buat file
+# config.local.yaml di folder ini (tidak masuk Git), isi hanya yang berbeda. Contoh:
+#   serial: {port: COM5}
+#   camera: {index: 1}
 serial:
   port: COM3            # Windows: COMx | Linux: /dev/ttyUSB0 | macOS: /dev/tty.usbserial-xxx
   baudrate: 115200
@@ -11,7 +15,7 @@ camera:
   flush_frames: 5       # buang frame lama dari buffer webcam sebelum mengambil gambar
 
 capture:
-  settle_after_detect_s: 1.0.   # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
+  settle_after_detect_s: 1.0    # jeda setelah DETECT agar tomat diam dan tangan menjauh, ukur dari alat
 
 rubric:                 # lihat docs/RUBRIK.md
   red_ripe_min_pct: 60      # tingkat 1 bila merah >= nilai ini (acuan USDA)
@@ -51,6 +55,6 @@ dashboard:                      # lihat dashboard/README.md
     max_per_minute: 20
 
 ml:                             # opsional: controller memanggil ml/api.py (uvicorn ml.api:app) untuk klasifikasi gambar
-  api_url: null                 # mis. http://127.0.0.1:9000 ; null = pakai ml/predict.py (fitur)
-  architecture: null            # resnext50 | resnext101 | null (bawaan server)
+  api_url: http://127.0.0.1:9000  # jalankan dulu: python -m uvicorn ml.api:app --port 9000 ; null = pakai ml/predict.py (fitur)
+  architecture: resnext101      # resnext50 | resnext101 | null (bawaan server)
   timeout_s: 10
