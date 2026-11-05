@@ -29,7 +29,9 @@ python -m uvicorn ml.api:app --port 9000
 
 Tunggu pesan warm-up selesai (server baru menerima permintaan setelah model termuat). `GET http://127.0.0.1:9000/health` harus `ready`. Uji `POST /predict` di Postman dengan satu foto tomat dan catat waktu respons.
 
-## Tahap 3: kamera dan vision
+## Tahap 3: kamera, vision, dan model (tanpa Arduino, tanpa Postman)
+
+Dengan API model jalan (tahap 2): `python -m tools.camera_predict`, taruh tomat di stasiun, tekan SPASI. Terminal menampilkan grade, kelas, confidence, dan waktu API; foto debug tersimpan di `data/debug/`. Ini jalur yang sama dengan controller. Tutup alat ini sebelum menjalankan controller (webcam hanya untuk satu program).
 
 `python -m tools.capture_dataset` untuk melihat gambar stasiun. Tomat harus terlihat utuh dan terang, kamera dan lampu tidak berubah posisi. Perubahan apa pun mewajibkan foto latar kosong baru.
 
