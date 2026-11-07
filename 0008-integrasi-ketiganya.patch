@@ -1,0 +1,685 @@
+diff --git a/controller/config.py b/controller/config.py
+index 750dc5d..c07cbda 100644
+--- a/controller/config.py
++++ b/controller/config.py
+@@ -32,3 +32,15 @@ def load_config(path=None) -> dict:
+             raise ValueError(f"{local.name} harus berisi pemetaan YAML (kunci: nilai)")
+         _deep_merge(cfg, override)
+     return cfg
++
++
++def load_env() -> None:
++    """Muat .env di root proyek (GEMINI_API_KEY, DASHBOARD_INGEST_KEY) ke environment proses ini.
++
++    Variabel yang sudah ada di terminal menang atas isi .env. Dipakai controller dan alat uji agar
++    memakai kunci yang sama dengan dashboard (yang juga membaca .env); tanpa ini kunci di .env hanya
++    dikenali dashboard dan semua kiriman controller ditolak (HTTP 401).
++    """
++    from dotenv import load_dotenv
++
++    load_dotenv(DEFAULT_PATH.parent / ".env")
+diff --git a/controller/dashboard_client.py b/controller/dashboard_client.py
+index e857931..52d5352 100644
+--- a/controller/dashboard_client.py
++++ b/controller/dashboard_client.py
+@@ -114,3 +114,18 @@ class DashboardClient:
+         if now - self._last_warn > 10:  # jangan membanjiri terminal
+             self._last_warn = now
+             print(f"[dashboard] {text}", file=sys.stderr)
++
++
++def check_dashboard(base_url: str, timeout_s: float = 3.0) -> tuple[bool, str]:
++    """Periksa GET /api/health dashboard. Hanya untuk informasi: controller tetap memilah bila dashboard mati."""
++    from urllib import request
++
++    url = base_url.rstrip("/") + "/api/health"
++    try:
++        with request.urlopen(url, timeout=timeout_s) as resp:
++            if resp.status == 200:
++                return True, f"Dashboard terhubung ({base_url})"
++            return False, f"Dashboard menjawab HTTP {resp.status} di {url}"
++    except OSError as e:
++        return False, (f"Dashboard tidak terjangkau di {url} ({e.__class__.__name__}). "
++                       "Jalankan di terminal lain: python -m dashboard")
+diff --git a/controller/main.py b/controller/main.py
+index 04dd1da..e9d7e9f 100644
+--- a/controller/main.py
++++ b/controller/main.py
+@@ -190,11 +190,13 @@ def main():
+     import cv2
+ 
+     from controller.camera import Camera
+-    from controller.dashboard_client import DashboardClient
++    from controller.config import load_env
++    from controller.dashboard_client import DashboardClient, check_dashboard
+     from controller.ml_client import check_api, make_image_predictor
+     from controller.serial_link import SerialLink
+     from ml.predict import predict
+ 
++    load_env()
+     cfg = load_config()
+     validate_config(cfg)
+ 
+@@ -215,6 +217,8 @@ def main():
+         image_predict = make_image_predictor(ml["api_url"], ml.get("architecture"), ml.get("timeout_s", 10))
+         print(f"Klasifikasi lewat API model: {ml['api_url']}")
+ 
++    ok, message = check_dashboard(cfg["dashboard"]["url"])
++    print(message if ok else f"PERINGATAN: {message}\n  Controller tetap memilah tomat, tetapi hasilnya tidak tersimpan ke database.")
+     client = DashboardClient.from_config(cfg).start()
+     cam_cfg, ser_cfg = cfg["camera"], cfg["serial"]
+     camera = Camera(cam_cfg["index"], cam_cfg["width"], cam_cfg["height"], cam_cfg["flush_frames"])
+diff --git a/docs/INTEGRASI.md b/docs/INTEGRASI.md
+index 8531cda..b3d5826 100644
+--- a/docs/INTEGRASI.md
++++ b/docs/INTEGRASI.md
+@@ -1,56 +1,113 @@
+-# Runbook integrasi model + hardware
++# Runbook integrasi: kamera, hardware, model, dashboard, dan database
+ 
+-Tujuan: satu tomat diletakkan di stasiun foto, IR memicu `DETECT`, webcam memotret, API model memberi grade, firmware menggerakkan servo ke jalur yang benar. Uji **bertahap**; jangan lanjut ke tahap berikut sebelum tahap sebelumnya lolos.
++## Gambaran
+ 
+-## Prasyarat
++```
++ tomat -> IR -> ESP32 --DETECT,id--> controller --foto JPEG--> API model (:9000) -> grade
++                  ^                      |  ^
++                  +--GRADE,id,X----------+  +-- ACK / DONE / ERR dari ESP32
++                                         |
++                                         +--(HTTP /api/ingest/*)--> dashboard (:8000) --> data/tomato.db
++                                         |   hasil tomat, pesan firmware, log, heartbeat, frame kamera
++                                         +--> browser: status alat, kamera langsung, riwayat, log, chatbot
++```
++
++| Proses | Perintah | Memegang | Catatan |
++|---|---|---|---|
++| API model | `python -m uvicorn ml.api:app --port 9000` | file model di `models/` | Tunggu warm-up selesai |
++| Dashboard | `python -m dashboard` | **database `data/tomato.db`** | Satu-satunya proses yang menulis database |
++| Controller | `python -m controller.main` | webcam + port serial | Mengirim semuanya ke dashboard lewat HTTP |
++| Uji kamera | `python -m tools.camera_predict` | webcam | Pengganti controller tanpa Arduino. **Jangan jalan bersamaan dengan controller** |
++
++Controller dan alat uji tidak menyentuh database langsung; mereka mengirim ke dashboard. Karena itu database selalu konsisten dan tidak ada konflik penguncian SQLite.
++
++## Persiapan satu kali
+ 
+ | Item | Cara |
+ |---|---|
+-| Firmware protokol v0.3 | Upload `firmware/tomato_sorter/tomato_sorter.ino` dari repo ini. Sketch lama (perintah `1/2/3`, `busuk/setengah/matang`, log `[IR_DETECTED]`) **tidak** kompatibel dengan controller |
+-| File model di `models/` | 4 file `*_resnext101.*` (dari Drive tim). Tidak masuk Git (lebih dari 100 MB) |
+-| Foto latar kosong | `python -m tools.capture_dataset`, kosongkan stasiun, tekan `b` (menghasilkan `data/raw/background.jpg`) |
+-| Port dan kamera laptop ini | `python -m tools.hardware_check`, lalu isi `config.local.yaml` (tidak masuk Git) |
++| Firmware protokol v0.3 | Upload `firmware/tomato_sorter/tomato_sorter.ino`. Sketch lama (perintah `1/2/3`, log `[IR_DETECTED]`) tidak kompatibel |
++| File model di `models/` | 4 file `*_resnext101.*` dari Drive tim (tidak masuk Git, lebih dari 100 MB) |
++| Foto latar kosong | `python -m tools.capture_dataset`, stasiun kosong, tombol `b` -> `data/raw/background.jpg`. Ulangi bila kamera atau lampu bergeser |
++| Port serial dan kamera laptop ini | `python -m tools.hardware_check`, isi `config.local.yaml` (tidak masuk Git): `serial: {port: COM5}` dan `camera: {index: 1}` |
++| Kunci | File `.env` di root proyek (tidak masuk Git): `GEMINI_API_KEY=...` untuk chatbot. `DASHBOARD_INGEST_KEY=...` hanya perlu bila dashboard di PC lain; controller dan alat uji ikut membaca `.env` |
+ 
+-Pemetaan jalur (sama dengan `docs/PROTOCOL.md`): **A** = servo 3 (kematangan dan mulus terbaik), **B** = servo 2, **C** = jalur lurus (mentah atau cacat berat). Jangan memakai pemetaan lama `1=A=busuk`; itu terbalik terhadap rubrik.
++Pemetaan jalur: **A** = servo 3, **B** = servo 2, **C** = lurus (sama dengan `docs/PROTOCOL.md`).
+ 
+-## Tahap 1: firmware dan serial (tanpa kamera, tanpa model)
++## Tiga mode uji (dari paling sederhana)
+ 
+-1. Tutup Serial Monitor Arduino IDE (satu port hanya untuk satu program).
+-2. `python -m tools.send_grade A` lalu taruh tomat di depan IR. Terminal menampilkan `DETECT`, `ACK`, `DONE`.
+-3. Ulangi untuk `B` dan `C`. Periksa fisik: A masuk jalur servo 3, B servo 2, C lurus.
++| Mode | Yang jalan | Tujuan |
++|---|---|---|
++| 1. Hardware saja | `python -m tools.send_grade A` (tanpa kamera, model, dashboard) | Serial, servo, dan jalur fisik benar |
++| 2. Kamera + model (+ dashboard) | API model, dashboard (opsional), `python -m tools.camera_predict` | Webcam -> vision -> model berfungsi; hasil ikut tampil di dashboard |
++| 3. Lengkap | API model, dashboard, controller | Seluruh alur mesin |
++
++Mode 2 tanpa dashboard: tambahkan `--no-dashboard`, hasil hanya di terminal. Tomat dari uji kamera tersimpan di database **tanpa `firmware_id`** (tomat dari mesin selalu punya) dan ikut terhitung di total.
+ 
+-Lulus bila ketiga jalur benar dan tidak ada `ERR`.
++## Prosedur end-to-end lengkap (mode 3)
+ 
+-## Tahap 2: API model
++Buka tiga terminal di root repo, venv aktif.
+ 
++**Terminal 1, API model**
+ ```powershell
+ python -m uvicorn ml.api:app --port 9000
+ ```
++Tunggu pesan warm-up selesai. Cek `http://127.0.0.1:9000/health` -> `status: ready`.
++
++**Terminal 2, dashboard**
++```powershell
++python -m dashboard
++```
++Buka `http://127.0.0.1:8000`. Panel kamera masih kosong dan status alat belum terhubung; itu normal.
+ 
+-Tunggu pesan warm-up selesai (server baru menerima permintaan setelah model termuat). `GET http://127.0.0.1:9000/health` harus `ready`. Uji `POST /predict` di Postman dengan satu foto tomat dan catat waktu respons.
++**Terminal 3, pemeriksaan lalu controller** (tutup Serial Monitor Arduino IDE dan `tools.camera_predict` dulu)
++```powershell
++python -m tools.check_stack
++python -m controller.main
++```
++`check_stack` memeriksa config, API model, dashboard, foto latar, port serial, kamera, dan kunci chatbot. Semua `GAGAL` harus beres sebelum lanjut; `PERINGATAN` tidak menghentikan. Controller menunggu ESP32 (board reset saat port dibuka, tunggu `READY`), lalu mencetak `API model siap`, `Dashboard terhubung`, dan `Controller berjalan`.
+ 
+-## Tahap 3: kamera, vision, dan model (tanpa Arduino, tanpa Postman)
++**Satu tomat**: letakkan di stasiun foto. Urutan yang benar:
+ 
+-Dengan API model jalan (tahap 2): `python -m tools.camera_predict`, taruh tomat di stasiun, tekan SPASI. Terminal menampilkan grade, kelas, confidence, dan waktu API; foto debug tersimpan di `data/debug/`. Ini jalur yang sama dengan controller. Tutup alat ini sebelum menjalankan controller (webcam hanya untuk satu program).
++1. IR memicu; buzzer berbunyi; firmware mengirim `DETECT,<id>`; konveyor berhenti.
++2. Controller menunggu `settle_after_detect_s`, mengambil foto segar, segmentasi, mengirim JPEG ke API model.
++3. Controller mengirim `GRADE,<id>,<A|B|C>`; firmware membalas `ACK,<id>`; servo menggeser tomat ke jalur.
++4. Setelah waktu tempuh habis firmware mengirim `DONE,<id>,<grade>` lalu `READY`.
+ 
+-`python -m tools.capture_dataset` untuk melihat gambar stasiun. Tomat harus terlihat utuh dan terang, kamera dan lampu tidak berubah posisi. Perubahan apa pun mewajibkan foto latar kosong baru.
++**Yang harus terlihat di dashboard:**
++
++| Elemen | Tampilan |
++|---|---|
++| Status alat | `READY` -> `DETECT` -> `GRADING` -> `ACK` -> `DONE` -> `READY`; serial dan kamera hijau |
++| Kamera langsung | Gambar webcam bergerak |
++| Riwayat | Baris baru: grade, kelas kematangan dan cacat beserta keyakinan, model `resnext101`, latensi, foto, status serial `DONE` |
++| Log | "Tomat #n terdeteksi" dan "selesai diantar ke jalur X" |
++| Total per grade dan grafik | Bertambah satu |
++| Chatbot | "Berapa tomat per grade?" dijawab dari database |
+ 
+-## Tahap 4: end-to-end
++## Memeriksa dan mereset database
++
++Lihat 5 tomat terakhir (tanpa memasang sqlite3):
++
++```powershell
++python -c "import sqlite3; [print(r) for r in sqlite3.connect('data/tomato.db').execute('select id, firmware_id, grade, serial_status, architecture from tomatoes order by id desc limit 5')]"
++```
+ 
+-Terminal 1: API model (tahap 2). Terminal 2: dashboard `python -m dashboard`. Terminal 3: `python -m controller.main`. Controller memeriksa API saat mulai dan berhenti dengan pesan jelas bila model belum siap.
++Ekspor penuh: `http://127.0.0.1:8000/api/export.csv`.
+ 
+-Taruh satu tomat. Urutan yang benar: `DETECT` -> jeda `settle_after_detect_s` -> foto -> `GRADE` -> `ACK` -> `DONE` -> `READY`. Hasil dan foto muncul di dashboard.
++Reset sebelum demo: hentikan dashboard, hapus `data/tomato.db` (opsional juga isi `data/debug/`), jalankan dashboard lagi; database dibuat ulang otomatis. Lakukan ini agar tomat uji tidak ikut terhitung.
+ 
+ ## Anggaran waktu
+ 
+-Firmware menunggu `GRADE` paling lama `WAKTU_TUNGGU_GRADE` (15 s). Pemakaian waktu per tomat: `settle_after_detect_s` + ambil frame + segmentasi + HTTP prediksi (sekitar 0,7 s sampai 1,3 s hanya untuk model di CPU Colab; ukur di laptop ini). Bila total mendekati batas, naikkan `WAKTU_TUNGGU_GRADE` atau percepat salah satu langkah. Setelah terukur, isi `timeouts_s.grade_wait` di `config.yaml`.
++Firmware menunggu `GRADE` paling lama `WAKTU_TUNGGU_GRADE` (15 s). Pemakaian per tomat: `settle_after_detect_s` + ambil frame + segmentasi + HTTP prediksi (sekitar 0,7 s sampai 1,3 s hanya model di CPU Colab; ukur di laptop ini). Bila total mendekati batas, naikkan `WAKTU_TUNGGU_GRADE` atau percepat salah satu langkah, lalu isi `timeouts_s.grade_wait` di `config.yaml`.
+ 
+ ## Masalah umum
+ 
+ | Gejala | Penyebab | Tindakan |
+ |---|---|---|
+-| `could not open port COMx` | Port dipakai program lain atau salah | Tutup Serial Monitor; jalankan `tools.hardware_check` |
+-| `ERR,<id>,GRADE_TIMEOUT` | PC tidak membalas | Lihat terminal controller: API mati, tomat tidak valid di gambar, atau waktu melebihi batas |
+-| Hampir semua tomat menjadi C | Head defect di foto primer menandai tomat sehat sebagai reject (recall healthy sekitar 49%) | Masalah model, bukan integrasi; ditangani saat dataset diganti |
+-| Controller berhenti dengan pesan "API model" | API belum jalan atau file model hilang | Jalankan tahap 2 |
+-| `DONE` muncul tapi tomat tidak masuk wadah | `DONE` hanya berarti waktu tempuh habis | Kalibrasi `WAKTU_TEMPUH_*` di firmware |
++| `could not open port COMx` | Port dipakai program lain atau salah | Tutup Serial Monitor; `python -m tools.hardware_check` |
++| Kamera `GAGAL` di `check_stack` | Dipakai controller, `camera_predict`, atau aplikasi lain; salah indeks | Tutup yang lain; ganti `camera.index` di `config.local.yaml` |
++| Controller jalan tapi dashboard kosong | Dashboard mati, atau kunci beda | Lihat pesan `[dashboard]` di terminal controller; samakan `DASHBOARD_INGEST_KEY` (HTTP 401) |
++| `ERR,<id>,GRADE_TIMEOUT` | PC tidak membalas | Lihat terminal controller: API mati, tidak ada tomat valid di gambar, atau melebihi batas waktu |
++| Controller berhenti dengan pesan "API model" | API belum jalan atau file model hilang | Jalankan terminal 1, tunggu warm-up |
++| Hampir semua tomat menjadi C | Head defect di foto primer menandai tomat sehat sebagai reject | Masalah model, bukan integrasi; ditangani saat dataset diganti |
++| `DONE` tetapi tomat tidak masuk wadah | `DONE` hanya berarti waktu tempuh habis | Kalibrasi `WAKTU_TEMPUH_*` di firmware |
+diff --git a/tests/test_camera_predict.py b/tests/test_camera_predict.py
+index 7334ad0..8b81f11 100644
+--- a/tests/test_camera_predict.py
++++ b/tests/test_camera_predict.py
+@@ -38,3 +38,15 @@ def test_analyze_skips_model_when_no_tomato():
+ 
+     assert outcome["valid"] is False
+     assert "GRADE_TIMEOUT" in format_summary(outcome)
++
++
++def test_build_tomato_payload_has_no_firmware_id_and_matches_ingest_schema():
++    from dashboard.schemas import TomatoIn
++    from tools.camera_predict import build_tomato_payload
++
++    outcome = analyze(_frame(True), _frame(False), None, lambda jpeg: RESULT)
++    payload = build_tomato_payload(outcome, "data/debug/UJI_1.jpg")
++
++    parsed = TomatoIn.model_validate(payload)
++    assert parsed.firmware_id is None and parsed.grade == "B"
++    assert parsed.image_path == "data/debug/UJI_1.jpg" and parsed.latency_ms >= 0
+diff --git a/tests/test_check_stack.py b/tests/test_check_stack.py
+new file mode 100644
+index 0000000..063f188
+--- /dev/null
++++ b/tests/test_check_stack.py
+@@ -0,0 +1,60 @@
++import os
++
++from controller.config import load_config
++import controller.config as config_module
++from tools.check_stack import FAIL, OK, WARN, format_checks, run_checks
++
++
++def _run(cfg=None, **over):
++    deps = dict(
++        check_api=lambda url, arch: (True, "API model siap"),
++        check_dashboard=lambda url: (True, "Dashboard terhubung"),
++        serial_ports=lambda: [("COM3", "CH340")],
++        camera_opens=lambda i: True,
++        env={"GEMINI_API_KEY": "x"},
++        exists=lambda p: True,
++    )
++    deps.update(over)
++    return {c.name: c for c in run_checks(cfg or load_config(), **deps)}
++
++
++def test_everything_ready():
++    checks = _run()
++    assert all(c.status == OK for c in checks.values())
++    assert "Siap dijalankan" in format_checks(list(checks.values()))
++
++
++def test_failures_block_but_warnings_do_not():
++    checks = _run(check_api=lambda u, a: (False, "API mati"), serial_ports=lambda: [("COM9", "x")],
++                  camera_opens=lambda i: False, check_dashboard=lambda u: (False, "dashboard mati"),
++                  exists=lambda p: False, env={})
++    assert checks["API model"].status == FAIL
++    assert checks["Port serial"].status == FAIL and "COM9" in checks["Port serial"].detail
++    assert checks["Kamera"].status == FAIL
++    assert checks["Dashboard"].status == WARN
++    assert checks["Foto latar kosong"].status == WARN
++    assert checks["GEMINI_API_KEY (chatbot)"].status == WARN
++    text = format_checks(list(checks.values()))
++    assert "3 pemeriksaan GAGAL" in text and "peringatan" in text
++
++
++def test_null_api_url_and_bad_config_are_failures():
++    cfg = load_config()
++    cfg["ml"]["api_url"] = None
++    cfg["capture"]["settle_after_detect_s"] = "1.0."
++    checks = _run(cfg)
++    assert checks["API model"].status == FAIL and checks["Config"].status == FAIL
++
++
++def test_load_env_reads_dotenv_but_does_not_override_terminal(tmp_path, monkeypatch):
++    (tmp_path / "config.yaml").write_text("a: 1\n")
++    (tmp_path / ".env").write_text("DASHBOARD_INGEST_KEY=dari-dotenv\nGEMINI_API_KEY=dari-dotenv\n")
++    monkeypatch.setattr(config_module, "DEFAULT_PATH", tmp_path / "config.yaml")
++    monkeypatch.delenv("DASHBOARD_INGEST_KEY", raising=False)
++    monkeypatch.setenv("GEMINI_API_KEY", "dari-terminal")
++
++    config_module.load_env()
++
++    assert os.environ["DASHBOARD_INGEST_KEY"] == "dari-dotenv"
++    assert os.environ["GEMINI_API_KEY"] == "dari-terminal"
++    monkeypatch.delenv("DASHBOARD_INGEST_KEY", raising=False)
+diff --git a/tests/test_e2e_stack.py b/tests/test_e2e_stack.py
+new file mode 100644
+index 0000000..7a824cd
+--- /dev/null
++++ b/tests/test_e2e_stack.py
+@@ -0,0 +1,97 @@
++"""Uji nyata: controller / alat uji kamera -> HTTP -> dashboard (uvicorn sungguhan) -> database SQLite.
++
++Hanya serial, kamera, dan model yang ditiru; dashboard, jalur HTTP, dan database adalah yang asli.
++"""
++import shutil
++import socket
++import threading
++import time
++
++import httpx
++import pytest
++
++from controller.config import load_config
++from controller.dashboard_client import DashboardClient, check_dashboard
++from controller.main import ROOT, Controller
++from controller.serial_link import SerialLink
++from dashboard.app import create_app
++from tests.mock_serial import MockSerial
++from tests.test_camera_predict import RESULT as CAMERA_RESULT
++from tools.camera_predict import analyze, build_tomato_payload, format_summary
++from tests.test_controller import FakeCamera, ML_RESULT
++
++uvicorn = pytest.importorskip("uvicorn")
++PHOTO_DIR = "data/debug_e2e_test"
++
++
++@pytest.fixture
++def stack(tmp_path, monkeypatch):
++    monkeypatch.delenv("DASHBOARD_INGEST_KEY", raising=False)
++    cfg = load_config()
++    cfg["capture"]["settle_after_detect_s"] = 0
++    cfg["dashboard"]["database"] = str(tmp_path / "e2e.db")
++    cfg["paths"]["debug_dir"] = PHOTO_DIR
++    with socket.socket() as s:
++        s.bind(("127.0.0.1", 0))
++        port = s.getsockname()[1]
++    cfg["dashboard"]["url"] = f"http://127.0.0.1:{port}"
++    server = uvicorn.Server(uvicorn.Config(create_app(cfg), host="127.0.0.1", port=port, log_level="warning"))
++    thread = threading.Thread(target=server.run, daemon=True)
++    thread.start()
++    for _ in range(100):
++        try:
++            if httpx.get(cfg["dashboard"]["url"] + "/api/health").status_code == 200:
++                break
++        except httpx.HTTPError:
++            time.sleep(0.1)
++    yield cfg
++    server.should_exit = True
++    thread.join(5)
++    shutil.rmtree(ROOT / PHOTO_DIR, ignore_errors=True)
++
++
++def test_full_sorting_cycle_ends_up_in_the_database(stack):
++    base = stack["dashboard"]["url"]
++    client = DashboardClient.from_config(stack).start()
++    serial = MockSerial([l.encode() + b"\n" for l in ["READY", "DETECT,1", "ACK,1", "DONE,1,B", "READY"]])
++    ctl = Controller(stack, SerialLink(serial_obj=serial), FakeCamera(True), lambda f: ("A", 0.9), client,
++                     image_predict_fn=lambda jpeg: ML_RESULT, sleep=lambda s: None)
++    for _ in range(5):
++        ctl.step()
++    client.frame(b"\xff\xd8\xff\xd9")
++    client.close()
++
++    assert serial.written == [b"GRADE,1,B\n"]
++    (row,) = httpx.get(base + "/api/tomatoes").json()["rows"]
++    assert (row["firmware_id"], row["grade"], row["serial_status"]) == (1, "B", "DONE")
++    assert row["architecture"] == "resnext101" and row["ripeness_class"] == "setengah"
++    assert httpx.get(f"{base}/api/tomatoes/{row['id']}/image").status_code == 200
++    messages = [e["message"] for e in httpx.get(base + "/api/events").json()]
++    assert any("terdeteksi" in m for m in messages) and any("selesai diantar" in m for m in messages)
++    overview = httpx.get(base + "/api/overview").json()
++    assert overview["stats"]["per_grade"] == {"A": 0, "B": 1, "C": 0}
++    assert overview["state"]["serial_ok"] is True and overview["state"]["camera_ok"] is True
++    assert httpx.get(base + "/api/frame").status_code == 200
++
++
++def test_camera_test_result_reaches_the_dashboard_without_firmware_id(stack):
++    base = stack["dashboard"]["url"]
++    outcome = analyze(FakeCamera(True).read_fresh(), FakeCamera(False).read_fresh(), None, lambda jpeg: CAMERA_RESULT)
++    client = DashboardClient.from_config(stack).start()
++
++    client.status(serial_ok=False, camera_ok=True)
++    client.tomato(build_tomato_payload(outcome, None))
++    client.event("INFO", "controller", f"[Uji kamera] {format_summary(outcome)}")
++    client.close()
++
++    (row,) = httpx.get(base + "/api/tomatoes").json()["rows"]
++    assert row["firmware_id"] is None and row["grade"] == "B" and row["architecture"] == "resnext101"
++    state = httpx.get(base + "/api/overview").json()["state"]
++    assert state["serial_ok"] is False and state["camera_ok"] is True
++    assert any("[Uji kamera]" in e["message"] for e in httpx.get(base + "/api/events").json())
++
++
++def test_check_dashboard_reports_live_and_dead_dashboard(stack):
++    assert check_dashboard(stack["dashboard"]["url"])[0] is True
++    ok, message = check_dashboard("http://127.0.0.1:9", timeout_s=0.5)
++    assert not ok and "python -m dashboard" in message
+diff --git a/tools/camera_predict.py b/tools/camera_predict.py
+index d9468dc..6334311 100644
+--- a/tools/camera_predict.py
++++ b/tools/camera_predict.py
+@@ -1,20 +1,25 @@
+-"""Uji webcam -> vision -> API model TANPA Arduino dan tanpa Postman.
+-
+-Menjalankan jalur yang sama dengan controller (foto segar, segmentasi, unggah JPEG ke ml/api.py), jadi
+-hasilnya mewakili apa yang akan dilihat controller. Jalankan API model dulu:
+-    python -m uvicorn ml.api:app --port 9000
+-lalu:
+-    python -m tools.camera_predict
+-Tombol:  SPASI = foto dan klasifikasikan | q = keluar
++"""Uji webcam -> vision -> API model TANPA Arduino, dengan hasil ikut tampil di dashboard.
++
++Menjalankan jalur yang sama dengan controller (foto segar, segmentasi, unggah JPEG ke ml/api.py), lalu
++mengirim hasilnya ke dashboard lewat jalur yang sama dengan controller (/api/ingest/*): tomat masuk
++database, kamera tampil di panel kamera, dan kejadian tercatat di log. Tomat dari uji kamera ditandai
++dengan firmware_id kosong (tomat dari mesin selalu punya firmware_id).
++
++    1) python -m uvicorn ml.api:app --port 9000      (API model)
++    2) python -m dashboard                            (opsional; tanpa ini hasil hanya di terminal)
++    3) python -m tools.camera_predict                 (--no-dashboard untuk tidak mengirim)
++Tombol: SPASI = foto dan klasifikasikan | q = keluar
+ Jangan jalankan bersamaan dengan controller: webcam hanya bisa dibuka satu program.
+ """
+ from __future__ import annotations
+ 
++import argparse
+ import time
+ from pathlib import Path
+ from typing import Any, Callable
+ 
+ ROOT = Path(__file__).resolve().parent.parent
++TAG = "[Uji kamera]"
+ 
+ 
+ def analyze(frame, background, mm_per_pixel, predict: Callable[[bytes], dict]) -> dict[str, Any]:
+@@ -43,15 +48,36 @@ def format_summary(outcome: dict[str, Any]) -> str:
+             f"model {r.get('architecture')} | waktu API {outcome['latency_ms']} ms")
+ 
+ 
++def build_tomato_payload(outcome: dict[str, Any], image_path: str | None) -> dict[str, Any]:
++    """Isi POST /api/ingest/tomatoes untuk hasil uji kamera (tanpa firmware_id)."""
++    r = outcome["result"]
++    payload = {k: r.get(k) for k in ("ripeness", "defect", "architecture")}
++    payload.update(grade=r["grade"], latency_ms=outcome["latency_ms"], image_path=image_path)
++    return payload
++
++
++def _relative(path: Path) -> str:
++    try:
++        return path.relative_to(ROOT).as_posix()
++    except ValueError:
++        return str(path)
++
++
+ def main() -> None:
+     import cv2
+ 
+     from controller.camera import Camera
+-    from controller.config import load_config
+-    from controller.imaging import write_jpeg_atomic
++    from controller.config import load_config, load_env
++    from controller.dashboard_client import DashboardClient, check_dashboard
++    from controller.imaging import encode_jpeg, write_jpeg_atomic
+     from controller.ml_client import check_api, make_image_predictor
+     from vision.debug import draw_debug
+ 
++    ap = argparse.ArgumentParser(prog="python -m tools.camera_predict", description=__doc__.splitlines()[0])
++    ap.add_argument("--no-dashboard", action="store_true", help="jangan kirim hasil ke dashboard")
++    args = ap.parse_args()
++
++    load_env()
+     cfg = load_config()
+     ml = cfg.get("ml") or {}
+     if not ml.get("api_url"):
+@@ -62,6 +88,14 @@ def main() -> None:
+     print(message)
+     predict = make_image_predictor(ml["api_url"], ml.get("architecture"), ml.get("timeout_s", 10))
+ 
++    client = None
++    if not args.no_dashboard:
++        ok, message = check_dashboard(cfg["dashboard"]["url"])
++        print(message if ok else f"PERINGATAN: {message}\n  Hasil uji hanya tampil di terminal.")
++        if ok:
++            client = DashboardClient.from_config(cfg).start()
++            client.event("INFO", "controller", f"{TAG} dimulai (tanpa Arduino)")
++
+     bg_path = Path(cfg["paths"]["background_image"])
+     bg_path = bg_path if bg_path.is_absolute() else ROOT / bg_path
+     background = cv2.imread(str(bg_path)) if bg_path.is_file() else None
+@@ -71,30 +105,58 @@ def main() -> None:
+     camera = Camera(cam["index"], cam["width"], cam["height"], cam["flush_frames"])
+     debug_dir = Path(cfg["paths"]["debug_dir"])
+     debug_dir = debug_dir if debug_dir.is_absolute() else ROOT / debug_dir
++    frame_interval = 1.0 / max(1, cfg["dashboard"]["stream_fps"])
++    last_frame_sent = last_beat = 0.0
+     last_text = "SPASI = klasifikasi | q = keluar"
+     try:
+         while True:
+             view = camera.read()
++            now = time.monotonic()
++            if client is not None:
++                if now - last_frame_sent >= frame_interval:
++                    jpeg = encode_jpeg(view)
++                    if jpeg:
++                        client.frame(jpeg)
++                    last_frame_sent = now
++                if now - last_beat >= 1.0:  # heartbeat agar status dashboard tidak dianggap usang
++                    client.status(serial_ok=False, camera_ok=True)
++                    last_beat = now
+             cv2.putText(view, last_text[:70], (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+             cv2.imshow("camera_predict", view)
+             key = cv2.waitKey(30) & 0xFF
+             if key == ord("q"):
+                 break
+-            if key == ord(" "):
+-                frame = camera.read_fresh()
+-                try:
+-                    outcome = analyze(frame, background, cfg["calibration"]["mm_per_pixel"], predict)
+-                except (OSError, ValueError) as exc:
+-                    last_text = f"API gagal: {exc.__class__.__name__}"
+-                    print(last_text, exc)
+-                    continue
+-                last_text = format_summary(outcome)
+-                print(last_text)
+-                debug = draw_debug(frame, outcome["mask"], outcome["features"]) if outcome["valid"] else frame
+-                path = debug_dir / f"camera_predict_{int(time.time() * 1000)}.jpg"
++            if key != ord(" "):
++                continue
++            frame = camera.read_fresh()
++            try:
++                outcome = analyze(frame, background, cfg["calibration"]["mm_per_pixel"], predict)
++            except (OSError, ValueError) as exc:
++                last_text = f"API gagal: {exc.__class__.__name__}"
++                print(last_text, exc)
++                if client is not None:
++                    client.event("ERROR", "controller", f"{TAG} API model gagal ({exc.__class__.__name__})")
++                continue
++            last_text = format_summary(outcome)
++            print(last_text)
++            image_path = None
++            if outcome["valid"]:
++                debug = draw_debug(frame, outcome["mask"], outcome["features"])
++                path = debug_dir / f"UJI_{int(time.time() * 1000)}.jpg"
+                 write_jpeg_atomic(path, debug)
+-                print("  foto debug:", path)
++                image_path = _relative(path)
++                print("  foto debug:", image_path)
++            if client is not None:
++                if outcome["valid"]:
++                    client.tomato(build_tomato_payload(outcome, image_path))
++                    client.event("INFO", "controller", f"{TAG} {last_text}"[:500])
++                else:
++                    client.event("WARN", "controller", f"{TAG} tidak ada tomat valid di gambar")
+     finally:
++        if client is not None:
++            client.status(camera_ok=False)
++            client.event("INFO", "controller", f"{TAG} selesai")
++            client.close()
+         camera.release()
+         cv2.destroyAllWindows()
+ 
+diff --git a/tools/check_stack.py b/tools/check_stack.py
+new file mode 100644
+index 0000000..9c43468
+--- /dev/null
++++ b/tools/check_stack.py
+@@ -0,0 +1,110 @@
++"""Pemeriksaan sebelum menjalankan ketiganya (API model, dashboard, controller + hardware).
++
++    python -m tools.check_stack
++
++Jalankan SEBELUM controller (kamera dan port serial hanya bisa dibuka satu program). Keluar dengan kode 1
++bila ada yang GAGAL; PERINGATAN tidak menggagalkan.
++"""
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++from typing import Callable, NamedTuple
++
++ROOT = Path(__file__).resolve().parent.parent
++OK, WARN, FAIL = "OK", "PERINGATAN", "GAGAL"
++
++
++class Check(NamedTuple):
++    name: str
++    status: str
++    detail: str
++
++
++def run_checks(cfg: dict, *, check_api: Callable, check_dashboard: Callable, serial_ports: Callable,
++               camera_opens: Callable, env: dict | None = None, exists: Callable = lambda p: Path(p).is_file()) -> list[Check]:
++    """Semua ketergantungan ke dunia luar disuntikkan agar bisa diuji tanpa hardware."""
++    env = os.environ if env is None else env
++    checks: list[Check] = []
++
++    def add(name, ok, detail, bad=FAIL):
++        checks.append(Check(name, OK if ok else bad, detail))
++
++    from controller.main import validate_config
++    try:
++        validate_config(cfg)
++        add("Config", True, "capture.settle_after_detect_s valid")
++    except SystemExit as exc:
++        add("Config", False, str(exc))
++
++    ml = cfg.get("ml") or {}
++    if ml.get("api_url"):
++        ok, msg = check_api(ml["api_url"], ml.get("architecture"))
++        add("API model", ok, msg)
++    else:
++        add("API model", False, "ml.api_url masih null: controller tidak memakai model ResNeXt")
++
++    ok, msg = check_dashboard(cfg["dashboard"]["url"])
++    add("Dashboard", ok, msg, bad=WARN)  # dashboard mati tidak menghentikan pemilahan
++
++    bg = cfg["paths"]["background_image"]
++    bg = bg if Path(bg).is_absolute() else ROOT / bg
++    add("Foto latar kosong", exists(bg), str(bg) if exists(bg) else
++        f"tidak ada ({bg}); segmentasi memakai cadangan saturasi. Buat dengan: python -m tools.capture_dataset, tombol b", bad=WARN)
++
++    port = cfg["serial"]["port"]
++    ports = serial_ports()
++    detected = ", ".join(p for p, _ in ports) or "tidak ada"
++    add("Port serial", any(p == port for p, _ in ports),
++        f"{port} terdeteksi" if any(p == port for p, _ in ports) else
++        f"{port} tidak terdeteksi (terdeteksi: {detected}). Isi serial.port di config.local.yaml")
++
++    index = cfg["camera"]["index"]
++    add("Kamera", camera_opens(index),
++        f"indeks {index} terbuka" if camera_opens(index) else
++        f"indeks {index} tidak bisa dibuka (dipakai program lain atau salah indeks). Jalankan: python -m tools.hardware_check")
++
++    add("GEMINI_API_KEY (chatbot)", bool(env.get("GEMINI_API_KEY")),
++        "terisi" if env.get("GEMINI_API_KEY") else "kosong: chatbot dashboard nonaktif (isi di .env)", bad=WARN)
++    return checks
++
++
++def format_checks(checks: list[Check]) -> str:
++    width = max(len(c.name) for c in checks)
++    lines = [f"[{c.status:<10}] {c.name:<{width}}  {c.detail}" for c in checks]
++    failed = sum(c.status == FAIL for c in checks)
++    warned = sum(c.status == WARN for c in checks)
++    lines.append("")
++    lines.append("Siap dijalankan." if not failed else f"{failed} pemeriksaan GAGAL: perbaiki dulu sebelum menjalankan controller.")
++    if warned:
++        lines.append(f"{warned} peringatan (tidak menghentikan).")
++    return "\n".join(lines)
++
++
++def _camera_opens(index: int) -> bool:
++    import cv2
++
++    cap = cv2.VideoCapture(index)
++    try:
++        ok, frame = cap.read() if cap.isOpened() else (False, None)
++        return bool(ok and frame is not None)
++    finally:
++        cap.release()
++
++
++def main() -> None:
++    from controller.config import load_config, load_env
++    from controller.dashboard_client import check_dashboard
++    from controller.ml_client import check_api
++    from tools.hardware_check import list_serial_ports
++
++    load_env()
++    checks = run_checks(load_config(), check_api=check_api, check_dashboard=check_dashboard,
++                        serial_ports=list_serial_ports, camera_opens=_camera_opens)
++    print(format_checks(checks))
++    sys.exit(1 if any(c.status == FAIL for c in checks) else 0)
++
++
++if __name__ == "__main__":
++    main()

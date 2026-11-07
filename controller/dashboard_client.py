@@ -114,3 +114,18 @@ class DashboardClient:
         if now - self._last_warn > 10:  # jangan membanjiri terminal
             self._last_warn = now
             print(f"[dashboard] {text}", file=sys.stderr)
+
+
+def check_dashboard(base_url: str, timeout_s: float = 3.0) -> tuple[bool, str]:
+    """Periksa GET /api/health dashboard. Hanya untuk informasi: controller tetap memilah bila dashboard mati."""
+    from urllib import request
+
+    url = base_url.rstrip("/") + "/api/health"
+    try:
+        with request.urlopen(url, timeout=timeout_s) as resp:
+            if resp.status == 200:
+                return True, f"Dashboard terhubung ({base_url})"
+            return False, f"Dashboard menjawab HTTP {resp.status} di {url}"
+    except OSError as e:
+        return False, (f"Dashboard tidak terjangkau di {url} ({e.__class__.__name__}). "
+                       "Jalankan di terminal lain: python -m dashboard")

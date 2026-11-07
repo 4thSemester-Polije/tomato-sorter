@@ -38,3 +38,15 @@ def test_analyze_skips_model_when_no_tomato():
 
     assert outcome["valid"] is False
     assert "GRADE_TIMEOUT" in format_summary(outcome)
+
+
+def test_build_tomato_payload_has_no_firmware_id_and_matches_ingest_schema():
+    from dashboard.schemas import TomatoIn
+    from tools.camera_predict import build_tomato_payload
+
+    outcome = analyze(_frame(True), _frame(False), None, lambda jpeg: RESULT)
+    payload = build_tomato_payload(outcome, "data/debug/UJI_1.jpg")
+
+    parsed = TomatoIn.model_validate(payload)
+    assert parsed.firmware_id is None and parsed.grade == "B"
+    assert parsed.image_path == "data/debug/UJI_1.jpg" and parsed.latency_ms >= 0

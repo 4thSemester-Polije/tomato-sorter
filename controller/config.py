@@ -32,3 +32,15 @@ def load_config(path=None) -> dict:
             raise ValueError(f"{local.name} harus berisi pemetaan YAML (kunci: nilai)")
         _deep_merge(cfg, override)
     return cfg
+
+
+def load_env() -> None:
+    """Muat .env di root proyek (GEMINI_API_KEY, DASHBOARD_INGEST_KEY) ke environment proses ini.
+
+    Variabel yang sudah ada di terminal menang atas isi .env. Dipakai controller dan alat uji agar
+    memakai kunci yang sama dengan dashboard (yang juga membaca .env); tanpa ini kunci di .env hanya
+    dikenali dashboard dan semua kiriman controller ditolak (HTTP 401).
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv(DEFAULT_PATH.parent / ".env")

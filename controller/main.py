@@ -190,11 +190,13 @@ def main():
     import cv2
 
     from controller.camera import Camera
-    from controller.dashboard_client import DashboardClient
+    from controller.config import load_env
+    from controller.dashboard_client import DashboardClient, check_dashboard
     from controller.ml_client import check_api, make_image_predictor
     from controller.serial_link import SerialLink
     from ml.predict import predict
 
+    load_env()
     cfg = load_config()
     validate_config(cfg)
 
@@ -215,6 +217,8 @@ def main():
         image_predict = make_image_predictor(ml["api_url"], ml.get("architecture"), ml.get("timeout_s", 10))
         print(f"Klasifikasi lewat API model: {ml['api_url']}")
 
+    ok, message = check_dashboard(cfg["dashboard"]["url"])
+    print(message if ok else f"PERINGATAN: {message}\n  Controller tetap memilah tomat, tetapi hasilnya tidak tersimpan ke database.")
     client = DashboardClient.from_config(cfg).start()
     cam_cfg, ser_cfg = cfg["camera"], cfg["serial"]
     camera = Camera(cam_cfg["index"], cam_cfg["width"], cam_cfg["height"], cam_cfg["flush_frames"])

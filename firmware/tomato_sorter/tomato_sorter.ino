@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESP32Servo.h>
+#include <esp_arduino_version.h>   // wajib: dipakai oleh #if ESP_ARDUINO_VERSION_MAJOR
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -12,6 +13,7 @@
 #define SCL_PIN 22
 
 #define IR_PIN 16
+#define BUZZER_PIN 26
 
 #define L298N_IN1 4
 #define L298N_IN2 27
@@ -28,6 +30,28 @@
 #define IR_DEBOUNCE_MS     50    // Sensor harus aktif minimal sekian ms agar dianggap buah
 #define IR_COOLDOWN_MS     500   // Setelah siklus selesai, abaikan IR sebentar
 #define KONVEYOR_JALAN_SAAT_IDLE false  // false = konveyor mati saat menunggu tomat (stasiun foto manual). true = perilaku lama
+
+// ================= PENGATURAN MOTOR (kick-start) =================
+// Motor DC diam + beban + PWM 200/255 lewat L298N sering tidak punya torsi awal cukup (stiction),
+// akibatnya "harus dipancing tangan". Solusi standar: beri duty penuh sebentar, lalu turun ke kecepatan kerja.
+#define KICK_DUTY    255   // 0 - 255, duty saat motor mulai berputar dari diam
+#define WAKTU_KICK_MS 300  // lama duty penuh. Naikkan (mis. 500) jika masih berat; 0 = matikan kick
+
+// ================= PENGATURAN BUZZER =================
+#define BUZZER_JUMLAH_BIP 3    // jumlah bunyi saat buah terdeteksi (sama seperti kode lama)
+#define BUZZER_BIP_MS     120  // lama tiap bunyi
+#define BUZZER_JEDA_MS    120  // jeda antar bunyi
+
+// ================= MODE UJI SERVO (khusus testing) =================
+// true  = perintah uji lewat Serial Monitor aktif (lihat bagian bawah komentar ini)
+// false = perintah uji dimatikan total. WAJIB false untuk operasi normal / demo / produksi.
+// Perintah (hanya diterima saat sistem idle/CARI_BUAH; semua balasan berawalan '#', jadi diabaikan PC):
+//   S1 / S2 / S3 : buka servo 1 (pusher) / servo 2 (gate B) / servo 3 (gate A) sebentar lalu tutup
+//   TA / TB / TC : simulasi siklus penuh grade A / B / C (sodok -> konveyor -> gate) tanpa PC
+//   HELP         : tampilkan daftar perintah
+// Simulasi TIDAK mengirim DONE/ACK dan TIDAK menambah penghitung, jadi dashboard tidak tercemar.
+#define MODE_TEST_SERVO true
+#define WAKTU_TES_SERVO 1500   // ms servo tetap terbuka pada perintah S1/S2/S3
 
 // ================= PENGATURAN SERVO (derajat) =================
 #define SUDUT_TUTUP 0
@@ -75,6 +99,20 @@ unsigned long tBebasMulai = 0;       // debounce IR bebas
 // Penghitung = jumlah yang DIPERINTAHKAN, bukan terkonfirmasi masuk wadah (pengantaran berbasis waktu).
 unsigned long jumlahA = 0, jumlahB = 0, jumlahC = 0;
 
+// Motor kick-start
+bool kickAktif = false;
+unsigned long tKick = 0;
+
+// Buzzer non-blocking
+uint8_t buzzerSisa = 0;        // jumlah bunyi yang belum dimainkan
+bool buzzerNyala = false;
+unsigned long tBuzzer = 0;
+
+// Mode uji servo
+bool modeSimulasi = false;     // true selama siklus simulasi TA/TB/TC
+Servo* servoUji = nullptr;     // servo yang sedang diuji (S1/S2/S3)
+unsigned long tServoUji = 0;
+
 // Buffer baris serial
 char rxBuf[24];
 uint8_t rxLen = 0;
@@ -86,6 +124,13 @@ void motorPwmInit();
 void motorPwmWrite(int duty);
 void motorMaju();
 void motorStop();
+void motorUpdate();
+void bunyiDeteksi();
+void buzzerUpdate();
+bool tanganiTest(const char* baris);
+void ujiServoMulai(Servo* sv, const char* nama);
+void ujiServoUpdate();
+void simulasiMulai(char grade);
 bool irTerdeteksi();
 bool irBebas();
 void dbg(const char* teks);
@@ -125,13 +170,53 @@ void motorPwmWrite(int duty) {
 void motorMaju() {
   digitalWrite(L298N_IN1, HIGH);
   digitalWrite(L298N_IN2, LOW);
-  motorPwmWrite(KECEPATAN_KONVEYOR);
+  if (WAKTU_KICK_MS > 0 && KICK_DUTY > KECEPATAN_KONVEYOR) {
+    motorPwmWrite(KICK_DUTY);       // dorong dulu agar lepas dari diam
+    kickAktif = true;
+    tKick = millis();
+  } else {
+    motorPwmWrite(KECEPATAN_KONVEYOR);
+    kickAktif = false;
+  }
 }
 
 void motorStop() {
+  kickAktif = false;
   digitalWrite(L298N_IN1, LOW);
   digitalWrite(L298N_IN2, LOW);
   motorPwmWrite(0);
+}
+
+// Dipanggil tiap loop(): turunkan ke kecepatan kerja setelah kick selesai
+void motorUpdate() {
+  if (kickAktif && millis() - tKick >= WAKTU_KICK_MS) {
+    motorPwmWrite(KECEPATAN_KONVEYOR);
+    kickAktif = false;
+  }
+}
+
+// ================= BUZZER (non-blocking, tidak menunda state machine) =================
+void bunyiDeteksi() {
+  buzzerSisa = BUZZER_JUMLAH_BIP;
+  buzzerNyala = false;
+  tBuzzer = millis() - BUZZER_JEDA_MS;   // mulai segera
+}
+
+void buzzerUpdate() {
+  if (buzzerSisa == 0 && !buzzerNyala) return;
+  unsigned long now = millis();
+  if (buzzerNyala) {
+    if (now - tBuzzer >= BUZZER_BIP_MS) {
+      digitalWrite(BUZZER_PIN, LOW);
+      buzzerNyala = false;
+      tBuzzer = now;
+    }
+  } else if (buzzerSisa > 0 && now - tBuzzer >= BUZZER_JEDA_MS) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    buzzerNyala = true;
+    buzzerSisa--;
+    tBuzzer = now;
+  }
 }
 
 // ================= SENSOR IR (dengan debounce) =================
@@ -192,6 +277,9 @@ bool bacaBaris(char* out, size_t ukuran) {
 // Mode PC: "GRADE,<id>,<A|B|C>". Mode debug manual: huruf tunggal A/B/C (memakai ID saat ini).
 void tanganiBaris(const char* baris) {
   if (baris[0] == 0) return;
+#if MODE_TEST_SERVO
+  if (tanganiTest(baris)) return;
+#endif
   char g = 0;
   unsigned long id = idSaatIni;
   char sisa[8];
@@ -221,6 +309,9 @@ void setup() {
   pinMode(IR_PIN, INPUT);
   pinMode(L298N_IN1, OUTPUT);
   pinMode(L298N_IN2, OUTPUT);
+  pinMode(L298N_ENA, OUTPUT);           // sama seperti kode lama; harus SEBELUM motorPwmInit()
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(L298N_IN1, LOW);
   digitalWrite(L298N_IN2, LOW);
 
@@ -263,7 +354,14 @@ void setup() {
     lcd.setCursor(0, 0);
     lcd.print("TES MOTOR...");
     motorMaju();
-    delay(2000);
+    if (kickAktif) {                       // delay() memblokir loop, jadi kick diselesaikan manual di sini
+      delay(WAKTU_KICK_MS);
+      motorPwmWrite(KECEPATAN_KONVEYOR);
+      kickAktif = false;
+      delay(2000 - WAKTU_KICK_MS);
+    } else {
+      delay(2000);
+    }
     motorStop();
     delay(500);
   }
@@ -277,6 +375,12 @@ void setup() {
 
 // ================= LOOP (STATE MACHINE) =================
 void loop() {
+  motorUpdate();
+  buzzerUpdate();
+#if MODE_TEST_SERVO
+  ujiServoUpdate();
+#endif
+
   // Baca baris serial di semua status; balasan ditentukan oleh tanganiBaris()
   char baris[24];
   if (bacaBaris(baris, sizeof(baris))) tanganiBaris(baris);
@@ -366,6 +470,7 @@ void mulaiMenungguGrade() {
   lcd.setCursor(0, 1);
   lcd.print("Menunggu grade  ");
   kirimDetect(idSaatIni);
+  bunyiDeteksi();   // setelah DETECT terkirim, tidak menunda protokol
   dbg("Manual: ketik A, B, atau C (A=servo 3, B=servo 2, C=lurus)");
 }
 
@@ -413,6 +518,14 @@ void selesaiMengantar() {
   servoSetengah.write(SUDUT_TUTUP);
   servoMatang.write(SUDUT_TUTUP);
 
+  if (modeSimulasi) {
+    // Simulasi uji: tidak ada DONE, tidak ada penghitung. Dashboard tidak tahu apa-apa.
+    modeSimulasi = false;
+    dbg("TEST simulasi selesai");
+    mulaiCariBuah();
+    return;
+  }
+
   if (gradeDipilih == 'A') jumlahA++;
   else if (gradeDipilih == 'B') jumlahB++;
   else jumlahC++;
@@ -430,3 +543,72 @@ unsigned long waktuTempuh(char grade) {
   if (grade == 'B') return WAKTU_TEMPUH_B_SERVO2;
   return WAKTU_TEMPUH_C_LURUS;   // nilai tak dikenal: jalur lurus, tanpa membuka gate
 }
+
+
+// ================= MODE UJI SERVO (hanya aktif bila MODE_TEST_SERVO true) =================
+#if MODE_TEST_SERVO
+
+void ujiServoMulai(Servo* sv, const char* nama) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "TEST %s buka", nama);
+  dbg(buf);
+  sv->write(SUDUT_BUKA);
+  servoUji = sv;
+  tServoUji = millis();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("TEST SERVO");
+  lcd.setCursor(0, 1);
+  lcd.print(nama);
+}
+
+void ujiServoUpdate() {
+  if (servoUji != nullptr && millis() - tServoUji >= WAKTU_TES_SERVO) {
+    servoUji->write(SUDUT_TUTUP);
+    servoUji = nullptr;
+    dbg("TEST servo tutup");
+    // Pulihkan LCD hanya bila sistem masih idle; jangan menimpa siklus nyata bila IR sempat terpicu
+    if (status == CARI_BUAH) mulaiCariBuah();
+  }
+}
+
+void simulasiMulai(char grade) {
+  modeSimulasi = true;
+  idSaatIni = idTomat;   // tidak menaikkan idTomat; ID asli tetap berurutan
+  dbg("TEST simulasi siklus penuh dimulai");
+  mulaiSodok(grade);     // sodok -> pusher kembali -> konveyor + gate -> selesaiMengantar()
+}
+
+// true bila baris adalah perintah uji (ditangani di sini, tidak diteruskan ke protokol)
+bool tanganiTest(const char* baris) {
+  char cmd[8];
+  size_t n = strlen(baris);
+  if (n == 0 || n > 4) return false;
+  for (size_t i = 0; i < n; i++) cmd[i] = (char)toupper(baris[i]);
+  cmd[n] = 0;
+
+  bool kenal = (strcmp(cmd, "S1") == 0 || strcmp(cmd, "S2") == 0 || strcmp(cmd, "S3") == 0 ||
+                strcmp(cmd, "TA") == 0 || strcmp(cmd, "TB") == 0 || strcmp(cmd, "TC") == 0 ||
+                strcmp(cmd, "HELP") == 0);
+  if (!kenal) return false;
+
+  if (strcmp(cmd, "HELP") == 0) {
+    dbg("S1/S2/S3 = tes servo 1(pusher)/2(gate B)/3(gate A)");
+    dbg("TA/TB/TC = simulasi siklus penuh grade A/B/C");
+    dbg("Hanya diterima saat idle (Mencari Buah)");
+    return true;
+  }
+
+  if (status != CARI_BUAH || servoUji != nullptr) {
+    dbg("TEST ditolak: sistem sedang bekerja");
+    return true;
+  }
+
+  if (strcmp(cmd, "S1") == 0) ujiServoMulai(&servoPusher, "SERVO 1 pusher");
+  else if (strcmp(cmd, "S2") == 0) ujiServoMulai(&servoSetengah, "SERVO 2 gate B");
+  else if (strcmp(cmd, "S3") == 0) ujiServoMulai(&servoMatang, "SERVO 3 gate A");
+  else simulasiMulai(cmd[1]);
+  return true;
+}
+
+#endif
