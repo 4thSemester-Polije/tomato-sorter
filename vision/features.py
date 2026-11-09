@@ -64,3 +64,109 @@ def extract_features(image, mask, mm_per_pixel=None) -> dict:
         "diameter_px": diameter_px,
         "diameter_mm": diameter_px * mm_per_pixel if mm_per_pixel else None,
     }
+
+
+def extract_ripeness_color_pct(img_bgr, mask_clean) -> dict:
+    """FITUR 1 PCV: Hitung persentase warna dominan (Merah, Kuning/Oranye, Hijau) di dalam mask.
+
+    Hanya mengekstraksi fitur persentase warna tanpa menentukan tingkat kematangan atau grade.
+    """
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    active = mask_clean > 0
+    pixels_r = img_rgb[:, :, 0][active]
+    pixels_g = img_rgb[:, :, 1][active]
+    pixels_b = img_rgb[:, :, 2][active]
+
+    total_masked_pixels = int(np.sum(active))
+    if total_masked_pixels > 0:
+        red_dominant = int(np.sum((pixels_r > pixels_g) & (pixels_r > pixels_b)))
+        green_dominant = int(np.sum((pixels_g > pixels_r) & (pixels_g > pixels_b)))
+        yellow_orange_dominant = total_masked_pixels - (red_dominant + green_dominant)
+
+        persen_merah = float((red_dominant / total_masked_pixels) * 100.0)
+        persen_hijau = float((green_dominant / total_masked_pixels) * 100.0)
+        persen_kuning = float(max(0.0, (yellow_orange_dominant / total_masked_pixels) * 100.0))
+    else:
+        persen_merah, persen_hijau, persen_kuning = 0.0, 0.0, 0.0
+
+    return {
+        "total_masked_pixels": total_masked_pixels,
+        "persen_merah": persen_merah,
+        "persen_kuning": persen_kuning,
+        "persen_hijau": persen_hijau,
+    }
+
+
+def extract_defect_area(img_bgr, mask_clean, dark_threshold: int = 50, erode_size: int = 15) -> dict:
+    """FITUR 2 PCV: Deteksi kontur utama, erosi ring pinggir, dan hitung persentase area cacat/bercak.
+
+    Hanya mengekstraksi fitur area cacat dan maskernya tanpa menentukan tingkat cacat atau grade.
+    """
+    contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    luas_piksel = 0.0
+    luas_evaluasi = 0
+    total_cacat_pixels = 0
+    persentase_cacat = 0.0
+    cacat_mask = np.zeros_like(mask_clean, dtype=np.uint8)
+    inner_contour_mask = np.zeros_like(mask_clean, dtype=np.uint8)
+    main_contour = None
+
+    if contours:
+        main_contour = max(contours, key=cv2.contourArea)
+        luas_piksel = float(cv2.contourArea(main_contour))
+
+        contour_mask = np.zeros_like(mask_clean, dtype=np.uint8)
+        cv2.drawContours(contour_mask, [main_contour], -1, 255, -1)
+
+        kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
+        inner_contour_mask = cv2.erode(contour_mask, kernel_erode, iterations=1)
+
+        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        cacat_bool = (img_gray < dark_threshold) & (inner_contour_mask > 0)
+        cacat_mask = (cacat_bool.astype(np.uint8)) * 255
+        total_cacat_pixels = int(np.sum(cacat_bool))
+
+        luas_evaluasi = int(np.sum(inner_contour_mask > 0))
+        persentase_cacat = float((total_cacat_pixels / luas_evaluasi) * 100.0) if luas_evaluasi > 0 else 0.0
+
+    return {
+        "luas_piksel": luas_piksel,
+        "luas_evaluasi": luas_evaluasi,
+        "total_cacat_pixels": total_cacat_pixels,
+        "persentase_cacat": persentase_cacat,
+        "cacat_mask": cacat_mask,
+        "inner_contour_mask": inner_contour_mask,
+        "main_contour": main_contour,
+    }
+
+
+def extract_pcv_features(img_bgr, crop_size: int = 300, save_crop_path=None) -> dict:
+    """Proses gambar yang baru ditangkap dari webcam menggunakan alur PCV lengkap (tanpa keputusan grade/prediksi).
+
+    Tahapan:
+      1. Masking gabungan HSV (Merah, Kuning/Oranye, Hijau) + Morfologi Opening (5x5) & Closing (15x15).
+      2. Ekstraksi Fitur 1: Persentase warna dominan (Merah, Kuning/Oranye, Hijau).
+      3. Ekstraksi Fitur 2: Kontur terbesar, erosi ring pinggir (15x15), peta area cacat (grayscale < 50), dan persentase cacat.
+      4. Auto-crop 1:1 pas di tengah berdasarkan kontur dan resize ke (crop_size, crop_size).
+    """
+    from vision.segmentation import auto_crop_1to1, segment_hsv_combined
+
+    mask_clean, img_segmented_rgb, img_segmented_bgr = segment_hsv_combined(img_bgr)
+    color_feats = extract_ripeness_color_pct(img_bgr, mask_clean)
+    defect_feats = extract_defect_area(img_bgr, mask_clean)
+    img_cropped_1to1_rgb = auto_crop_1to1(img_segmented_rgb, mask_clean, crop_size=crop_size)
+    img_cropped_1to1_bgr = cv2.cvtColor(img_cropped_1to1_rgb, cv2.COLOR_RGB2BGR)
+
+    if save_crop_path is not None:
+        cv2.imwrite(str(save_crop_path), img_cropped_1to1_bgr)
+
+    return {
+        "mask_clean": mask_clean,
+        "img_segmented_rgb": img_segmented_rgb,
+        "img_segmented_bgr": img_segmented_bgr,
+        "img_cropped_1to1_rgb": img_cropped_1to1_rgb,
+        "img_cropped_1to1_bgr": img_cropped_1to1_bgr,
+        **color_feats,
+        **defect_feats,
+    }

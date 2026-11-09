@@ -2,8 +2,14 @@ import cv2
 import numpy as np
 import pytest
 
-from vision.features import FEATURE_NAMES, extract_features
-from vision.segmentation import segment
+from vision.features import (
+    FEATURE_NAMES,
+    extract_defect_area,
+    extract_features,
+    extract_pcv_features,
+    extract_ripeness_color_pct,
+)
+from vision.segmentation import auto_crop_1to1, segment, segment_hsv_combined
 
 BG = (235, 235, 235)       # latar putih pucat (BGR)
 RED = (30, 30, 200)        # tomat merah (BGR)
@@ -88,3 +94,33 @@ def test_mean_hue_is_circular_for_red():
     f = extract_features(img, np.full((100, 100), 255, dtype=np.uint8))
     h = f["mean_h"]
     assert min(h, 180 - h) < 3      # dekat 0/179, BUKAN ~90 seperti rata-rata biasa
+
+
+def test_pcv_features_pipeline_on_webcam_frame(tmp_path):
+    img = scene(color=RED, spot_radius=30)
+    crop_file = tmp_path / "tomat_crop_1to1.png"
+    res = extract_pcv_features(img, crop_size=300, save_crop_path=crop_file)
+
+    assert res["mask_clean"].shape == (480, 640)
+    assert res["img_cropped_1to1_rgb"].shape == (300, 300, 3)
+    assert res["img_cropped_1to1_bgr"].shape == (300, 300, 3)
+    assert crop_file.is_file()
+    assert res["persen_merah"] > 80.0
+    assert res["persen_hijau"] == pytest.approx(0.0, abs=1.0)
+    assert res["luas_piksel"] > 0
+    assert 5.0 < res["persentase_cacat"] < 20.0
+    assert res["main_contour"] is not None
+    assert "grade" not in res and "tingkat_kematangan" not in res and "tingkat_cacat" not in res
+
+
+def test_pcv_green_tomato_color_dominance():
+    img = scene(color=GREEN, spot_radius=0)
+    mask_clean, img_seg_rgb, _ = segment_hsv_combined(img)
+    colors = extract_ripeness_color_pct(img, mask_clean)
+    defects = extract_defect_area(img, mask_clean)
+    cropped = auto_crop_1to1(img_seg_rgb, mask_clean, crop_size=300)
+
+    assert colors["persen_hijau"] > 90.0
+    assert colors["persen_merah"] < 1.0
+    assert defects["persentase_cacat"] == pytest.approx(0.0, abs=0.5)
+    assert cropped.shape == (300, 300, 3)
