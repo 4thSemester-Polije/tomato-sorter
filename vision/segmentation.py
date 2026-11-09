@@ -62,3 +62,100 @@ def segment(image, background=None, min_area_px=MIN_AREA_PX):
             raise ValueError("Ukuran foto latar dan gambar harus sama")
         return segment_by_background(image, background, min_area_px)
     return segment_by_saturation(image, min_area_px)
+
+
+# --- RENTANG WARNA HSV UNTUK MASKING GABUNGAN PCV ---
+HSV_RED1_LOWER = np.array([0, 70, 50], dtype=np.uint8)
+HSV_RED1_UPPER = np.array([10, 255, 255], dtype=np.uint8)
+HSV_RED2_LOWER = np.array([170, 70, 50], dtype=np.uint8)
+HSV_RED2_UPPER = np.array([180, 255, 255], dtype=np.uint8)
+
+HSV_YELLOW_LOWER = np.array([10, 70, 50], dtype=np.uint8)
+HSV_YELLOW_UPPER = np.array([35, 255, 255], dtype=np.uint8)
+
+HSV_GREEN_LOWER = np.array([35, 40, 40], dtype=np.uint8)
+HSV_GREEN_UPPER = np.array([85, 255, 255], dtype=np.uint8)
+
+
+def segment_hsv_combined(image_bgr):
+    """Masking gabungan HSV (Merah, Kuning/Oranye, dan Hijau) + pembersihan noise morfologi.
+
+    Input:
+        image_bgr: Citra BGR dari webcam.
+    Output:
+        tuple (mask_clean, img_segmented_rgb, img_segmented_bgr)
+    """
+    if image_bgr is None or image_bgr.size == 0:
+        raise ValueError("Gambar input kosong atau tidak valid")
+
+    img_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    img_hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+
+    # 1. Rentang Warna Merah
+    mask_red1 = cv2.inRange(img_hsv, HSV_RED1_LOWER, HSV_RED1_UPPER)
+    mask_red2 = cv2.inRange(img_hsv, HSV_RED2_LOWER, HSV_RED2_UPPER)
+    mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+
+    # 2. Rentang Warna Kuning / Oranye
+    mask_yellow = cv2.inRange(img_hsv, HSV_YELLOW_LOWER, HSV_YELLOW_UPPER)
+
+    # 3. Rentang Warna Hijau
+    mask_green = cv2.inRange(img_hsv, HSV_GREEN_LOWER, HSV_GREEN_UPPER)
+
+    # Gabungkan semua masker warna
+    mask = cv2.bitwise_or(mask_red, mask_yellow)
+    mask = cv2.bitwise_or(mask, mask_green)
+
+    # Pembersihan noise morfologi (Opening & Closing)
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    mask_clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+    mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel_close)
+
+    img_segmented_rgb = cv2.bitwise_and(img_rgb, img_rgb, mask=mask_clean)
+    img_segmented_bgr = cv2.bitwise_and(image_bgr, image_bgr, mask=mask_clean)
+    return mask_clean, img_segmented_rgb, img_segmented_bgr
+
+
+def auto_crop_1to1(img_segmented, mask_clean, crop_size: int = 300, scale_factor: float = 1.3):
+    """Auto-crop 1:1 pas di tengah berdasarkan kontur terbesar, lalu resize ke (crop_size, crop_size).
+
+    Input:
+        img_segmented: Citra hasil segmentasi (RGB atau BGR).
+        mask_clean: Mask biner hasil pembersihan morfologi (uint8).
+        crop_size: Ukuran sisi hasil resize (default 300x300).
+        scale_factor: Faktor perbesaran kotak terhadap ukuran kontur (default 1.3).
+    Output:
+        img_cropped_1to1: Citra hasil crop 1:1 berukuran (crop_size, crop_size, 3).
+    """
+    h_img, w_img = img_segmented.shape[:2]
+    contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        main_contour = max(contours, key=cv2.contourArea)
+        M = cv2.moments(main_contour)
+        if M["m00"] != 0:
+            center_x = int(M["m10"] / M["m00"])
+            center_y = int(M["m01"] / M["m00"])
+        else:
+            x, y, w, h = cv2.boundingRect(main_contour)
+            center_x = x + w // 2
+            center_y = y + h // 2
+
+        _, _, w_box, h_box = cv2.boundingRect(main_contour)
+        sisi = int(max(w_box, h_box) * scale_factor)
+    else:
+        center_x, center_y = w_img // 2, h_img // 2
+        sisi = min(w_img, h_img) // 2
+
+    sisi = max(1, sisi)
+    x_new = center_x - (sisi // 2)
+    y_new = center_y - (sisi // 2)
+
+    x_new = max(0, min(x_new, w_img - sisi))
+    y_new = max(0, min(y_new, h_img - sisi))
+    sisi = max(1, min(sisi, w_img - x_new, h_img - y_new))
+
+    img_cropped_tomat = img_segmented[y_new:y_new + sisi, x_new:x_new + sisi]
+    img_cropped_1to1 = cv2.resize(img_cropped_tomat, (crop_size, crop_size), interpolation=cv2.INTER_AREA)
+    return img_cropped_1to1

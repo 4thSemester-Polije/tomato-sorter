@@ -25,17 +25,18 @@ TAG = "[Uji kamera]"
 def analyze(frame, background, mm_per_pixel, predict: Callable[[bytes], dict]) -> dict[str, Any]:
     """Segmentasi lalu klasifikasi satu frame. Bila tidak ada tomat valid, API model tidak dipanggil."""
     from controller.imaging import encode_jpeg
-    from vision.features import extract_features
+    from vision.features import extract_features, extract_pcv_features
     from vision.segmentation import segment
 
     mask = segment(frame, background)
     try:
         features = extract_features(frame, mask, mm_per_pixel)
     except ValueError:
-        return {"valid": False, "mask": mask, "features": None, "result": None, "latency_ms": None}
+        return {"valid": False, "mask": mask, "features": None, "pcv": None, "result": None, "latency_ms": None}
+    pcv = extract_pcv_features(frame)
     started = time.perf_counter()
     result = predict(encode_jpeg(frame))
-    return {"valid": True, "mask": mask, "features": features, "result": result,
+    return {"valid": True, "mask": mask, "features": features, "pcv": pcv, "result": result,
             "latency_ms": round((time.perf_counter() - started) * 1000, 1)}
 
 
@@ -141,10 +142,22 @@ def main() -> None:
             print(last_text)
             image_path = None
             if outcome["valid"]:
+                ts = int(time.time() * 1000)
                 debug = draw_debug(frame, outcome["mask"], outcome["features"])
-                path = debug_dir / f"UJI_{int(time.time() * 1000)}.jpg"
+                path = debug_dir / f"UJI_{ts}.jpg"
                 write_jpeg_atomic(path, debug)
                 image_path = _relative(path)
+                pcv = outcome.get("pcv")
+                if pcv is not None:
+                    crop_path = debug_dir / f"UJI_{ts}_crop_1to1.jpg"
+                    write_jpeg_atomic(crop_path, pcv["img_cropped_1to1_bgr"])
+                    print(
+                        f"  fitur PCV: merah {pcv['persen_merah']:.1f}% | "
+                        f"kuning {pcv['persen_kuning']:.1f}% | "
+                        f"hijau {pcv['persen_hijau']:.1f}% | "
+                        f"cacat {pcv['persentase_cacat']:.1f}%"
+                    )
+                    print("  crop 1:1 :", _relative(crop_path))
                 print("  foto debug:", image_path)
             if client is not None:
                 if outcome["valid"]:

@@ -15,3 +15,11 @@ def draw_debug(image, mask, features=None):
         for i, text in enumerate(lines):
             cv2.putText(out, text, (10, 25 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     return out
+
+
+def draw_main_contour(image, main_contour, color=(0, 255, 0), thickness: int = 3):
+    """Gambar kontur utama objek tomat saja (tanpa bounding box)."""
+    out = image.copy()
+    if main_contour is not None:
+        cv2.drawContours(out, [main_contour], -1, color, thickness)
+    return out
