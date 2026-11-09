@@ -1,0 +1,24 @@
+{
+  "architecture": "resnext101",
+  "total_primary_images": 108,
+  "ripeness": {
+    "auc_macro_ovr": 0.7593261323213585,
+    "accuracy_full_frame": 0.5740740740740741,
+    "class_names": [
+      "matang",
+      "setengah_matang",
+      "mentah"
+    ]
+  },
+  "defect": {
+    "auc": 0.7945205479452054,
+    "evaluated_images": 82,
+    "excluded_level_2_images": 26,
+    "false_positive_healthy_as_reject": 37
+  },
+  "cropping": {
+    "valid_crop_images": 108,
+    "accuracy_full_frame": 0.5740740740740741,
+    "accuracy_crop": 0.6388888888888888
+  }
+}
