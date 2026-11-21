@@ -159,3 +159,52 @@ def auto_crop_1to1(img_segmented, mask_clean, crop_size: int = 300, scale_factor
     img_cropped_tomat = img_segmented[y_new:y_new + sisi, x_new:x_new + sisi]
     img_cropped_1to1 = cv2.resize(img_cropped_tomat, (crop_size, crop_size), interpolation=cv2.INTER_AREA)
     return img_cropped_1to1
+
+
+def auto_crop_1to1_with_mask(image_bgr, mask_clean, crop_size: int = 300, scale_factor: float = 1.3):
+    """Auto-crop 1:1 pas di tengah berdasarkan kontur terbesar, mengembalikan citra asli, tersegmentasi, dan mask.
+
+    Output:
+        tuple (crop_asli_bgr, crop_asli_rgb, crop_seg_rgb, mask_crop_1to1)
+    """
+    h_img, w_img = image_bgr.shape[:2]
+    contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        main_contour = max(contours, key=cv2.contourArea)
+        M = cv2.moments(main_contour)
+        if M["m00"] != 0:
+            center_x = int(M["m10"] / M["m00"])
+            center_y = int(M["m01"] / M["m00"])
+        else:
+            x, y, w, h = cv2.boundingRect(main_contour)
+            center_x = x + w // 2
+            center_y = y + h // 2
+
+        _, _, w_box, h_box = cv2.boundingRect(main_contour)
+        sisi = int(max(w_box, h_box) * scale_factor)
+    else:
+        center_x, center_y = w_img // 2, h_img // 2
+        sisi = min(w_img, h_img) // 2
+
+    sisi = max(1, sisi)
+    x_new = center_x - (sisi // 2)
+    y_new = center_y - (sisi // 2)
+
+    x_new = max(0, min(x_new, w_img - sisi))
+    y_new = max(0, min(y_new, h_img - sisi))
+    sisi = max(1, min(sisi, w_img - x_new, h_img - y_new))
+
+    crop_asli_bgr = cv2.resize(
+        image_bgr[y_new:y_new + sisi, x_new:x_new + sisi],
+        (crop_size, crop_size),
+        interpolation=cv2.INTER_AREA,
+    )
+    mask_crop_1to1 = cv2.resize(
+        mask_clean[y_new:y_new + sisi, x_new:x_new + sisi],
+        (crop_size, crop_size),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    crop_asli_rgb = cv2.cvtColor(crop_asli_bgr, cv2.COLOR_BGR2RGB)
+    crop_seg_rgb = cv2.bitwise_and(crop_asli_rgb, crop_asli_rgb, mask=mask_crop_1to1)
+    return crop_asli_bgr, crop_asli_rgb, crop_seg_rgb, mask_crop_1to1

@@ -35,7 +35,8 @@ def analyze(frame, background, mm_per_pixel, predict: Callable[[bytes], dict]) -
         return {"valid": False, "mask": mask, "features": None, "pcv": None, "result": None, "latency_ms": None}
     pcv = extract_pcv_features(frame)
     started = time.perf_counter()
-    result = predict(encode_jpeg(frame))
+    # Kirim citra hasil gabungan PCV (Crop 1:1 + LAB Tekstur CLAHE) ke model ResNeXt
+    result = predict(encode_jpeg(pcv["img_enhanced_bgr"]))
     return {"valid": True, "mask": mask, "features": features, "pcv": pcv, "result": result,
             "latency_ms": round((time.perf_counter() - started) * 1000, 1)}
 
@@ -149,15 +150,22 @@ def main() -> None:
                 image_path = _relative(path)
                 pcv = outcome.get("pcv")
                 if pcv is not None:
-                    crop_path = debug_dir / f"UJI_{ts}_crop_1to1.jpg"
-                    write_jpeg_atomic(crop_path, pcv["img_cropped_1to1_bgr"])
+                    enhanced_path = debug_dir / f"UJI_{ts}_pcv_enhanced.jpg"
+                    cacat_path = debug_dir / f"UJI_{ts}_pcv_cacat.jpg"
+                    write_jpeg_atomic(enhanced_path, pcv["img_enhanced_bgr"])
+                    write_jpeg_atomic(cacat_path, pcv["img_hasil_cacat_bgr"])
                     print(
-                        f"  fitur PCV: merah {pcv['persen_merah']:.1f}% | "
+                        f"  fitur PCV (HSV): merah {pcv['persen_merah']:.1f}% | "
+                        f"oranye {pcv['persen_oranye']:.1f}% | "
                         f"kuning {pcv['persen_kuning']:.1f}% | "
-                        f"hijau {pcv['persen_hijau']:.1f}% | "
-                        f"cacat {pcv['persentase_cacat']:.1f}%"
+                        f"hijau {pcv['persen_hijau']:.1f}%"
                     )
-                    print("  crop 1:1 :", _relative(crop_path))
+                    print(
+                        f"  fitur PCV (Tekstur): cacat {pcv['persentase_cacat']:.2f}% "
+                        f"({pcv['jumlah_kontur_cacat']} kontur)"
+                    )
+                    print("  PCV enhanced (ke AI):", _relative(enhanced_path))
+                    print("  PCV overlay cacat   :", _relative(cacat_path))
                 print("  foto debug:", image_path)
             if client is not None:
                 if outcome["valid"]:

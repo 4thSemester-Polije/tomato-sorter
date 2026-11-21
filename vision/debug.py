@@ -23,3 +23,13 @@ def draw_main_contour(image, main_contour, color=(0, 255, 0), thickness: int = 3
     if main_contour is not None:
         cv2.drawContours(out, [main_contour], -1, color, thickness)
     return out
+
+
+def draw_pcv_contours(image_bgr, cnts_tomat, cnts_cacat):
+    """Gambar overlay kontur buah tomat (hijau) dan kontur cacat permukaan (kuning, BGR: (0, 255, 255))."""
+    out = image_bgr.copy()
+    if cnts_tomat:
+        cv2.drawContours(out, cnts_tomat, -1, (0, 255, 0), 2)
+    if cnts_cacat:
+        cv2.drawContours(out, cnts_cacat, -1, (0, 255, 255), 2)
+    return out

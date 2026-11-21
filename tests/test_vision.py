@@ -97,20 +97,48 @@ def test_mean_hue_is_circular_for_red():
 
 
 def test_pcv_features_pipeline_on_webcam_frame(tmp_path):
-    img = scene(color=RED, spot_radius=30)
+    # Warna tomat realistis (kanal G kulit ~90) + bercak gelap (kanal G ~10) agar kontras di kanal hijau
+    img = scene(color=(35, 90, 210), spot_radius=0)
+    cv2.circle(img, (320, 240), 6, (10, 10, 20), -1)
+    cv2.circle(img, (345, 255), 5, (10, 10, 20), -1)
     crop_file = tmp_path / "tomat_crop_1to1.png"
-    res = extract_pcv_features(img, crop_size=300, save_crop_path=crop_file)
+    enhanced_file = tmp_path / "tomat_enhanced.png"
+    res = extract_pcv_features(img, crop_size=300, save_crop_path=crop_file, save_enhanced_path=enhanced_file)
 
     assert res["mask_clean"].shape == (480, 640)
+    assert res["mask_crop_1to1"].shape == (300, 300)
     assert res["img_cropped_1to1_rgb"].shape == (300, 300, 3)
-    assert res["img_cropped_1to1_bgr"].shape == (300, 300, 3)
-    assert crop_file.is_file()
+    assert res["img_enhanced_bgr"].shape == (300, 300, 3)
+    assert res["img_enhanced_rgb"].shape == (300, 300, 3)
+    assert res["gray_clahe_negatif"].shape == (300, 300)
+    assert res["img_hasil_cacat_bgr"].shape == (300, 300, 3)
+    assert crop_file.is_file() and enhanced_file.is_file()
     assert res["persen_merah"] > 80.0
     assert res["persen_hijau"] == pytest.approx(0.0, abs=1.0)
     assert res["luas_piksel"] > 0
-    assert 5.0 < res["persentase_cacat"] < 20.0
+    assert res["persentase_cacat"] > 0.0
+    assert res["jumlah_kontur_cacat"] >= 1
     assert res["main_contour"] is not None
     assert "grade" not in res and "tingkat_kematangan" not in res and "tingkat_cacat" not in res
+
+
+def test_pcv_color_hsv_and_texture_clean_tomato():
+    from vision.color import extract_hsv_color_features
+    from vision.segmentation import auto_crop_1to1_with_mask
+    from vision.texture import extract_texture_and_enhance
+
+    img = scene(color=GREEN, spot_radius=0)
+    mask_clean, _, _ = segment_hsv_combined(img)
+    crop_asli_bgr, _, _, mask_crop = auto_crop_1to1_with_mask(img, mask_clean, crop_size=300)
+    colors = extract_hsv_color_features(crop_asli_bgr, mask_crop)
+    texture = extract_texture_and_enhance(crop_asli_bgr, mask_crop)
+
+    assert colors["persen_hijau"] > 90.0
+    assert colors["persen_merah"] < 1.0
+    assert colors["persen_oranye"] < 1.0
+    assert colors["persen_kuning"] < 1.0
+    assert texture["persentase_cacat"] == pytest.approx(0.0, abs=0.5)
+    assert texture["img_enhanced_bgr"].shape == (300, 300, 3)
 
 
 def test_pcv_green_tomato_color_dominance():
