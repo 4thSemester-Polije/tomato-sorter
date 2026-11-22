@@ -37,6 +37,35 @@ ARCHITECTURE_PATTERN = "^(" + "|".join(sorted(ARCHITECTURES)) + ")$"
 pillow_heif.register_heif_opener()
 logger = logging.getLogger("uvicorn.error")
 
+GRADE_USES_DEFECT_ENV = "TOMATO_GRADE_USES_DEFECT"
+# Ditampilkan ke controller/dashboard bila kepala cacat tidak ikut menentukan grade.
+NOT_ASSESSED_DEFECT: dict[str, Any] = {
+    "class": "tidak_dinilai",
+    "level": None,
+    "confidence": 0.0,
+    "probabilities": {},
+}
+
+
+def _grade_uses_defect() -> bool:
+    """Bawaan: grade hanya dari kematangan. Atur TOMATO_GRADE_USES_DEFECT=1 agar kepala cacat ikut dipakai.
+
+    Alasan: pada 108 foto primer, kepala cacat (dilatih dari dataset Kaggle yang definisi "Reject"-nya
+    berbeda dari rubrik) menandai ~50% tomat normal sebagai reject, sehingga hampir semua jadi grade C.
+    """
+    return os.environ.get(GRADE_USES_DEFECT_ENV, "0") == "1"
+
+
+def _public_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Bentuk respons untuk controller/dashboard. predict_image() tetap mengembalikan keluaran CNN apa adanya
+    (dipakai alat evaluasi); di sini tebakan cacat yang tidak ikut grade tidak ditampilkan sebagai hasil."""
+    if result.get("grade_basis") != "ripeness":
+        return result
+    shown = dict(result)
+    shown["defect_raw"] = result.get("defect")
+    shown["defect"] = dict(NOT_ASSESSED_DEFECT)
+    return shown
+
 
 def warm_up(models_dir: Path | None = None, architecture: str | None = None) -> bool:
     """Muat model dan jalankan satu prediksi kosong agar tomat pertama tidak menunggu pemuatan model.
@@ -161,13 +190,15 @@ def predict_image(
         defect_metadata["class_names"],
         DEFECT_LEVELS,
     )
+    uses_defect = _grade_uses_defect()
     return {
         "model": display_name(architecture),
         "architecture": architecture,
         "input_size": list(INPUT_SIZE),
         "ripeness": ripeness,
         "defect": defect,
-        "grade": grade_from_levels(ripeness["level"], defect["level"]),
+        "grade": grade_from_levels(ripeness["level"], defect["level"] if uses_defect else 1),
+        "grade_basis": "ripeness+defect" if uses_defect else "ripeness",
     }
 
 
@@ -218,6 +249,6 @@ async def predict(
         ) from exc
 
     try:
-        return predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
+        return _public_result(predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import numpy as np
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -148,3 +149,77 @@ def test_server_startup_runs_warm_up_unless_disabled(monkeypatch):
     with TestClient(api.app):
         pass
     assert calls == [1]
+
+
+class _FakeModel:
+    def __init__(self, probabilities):
+        self._p = np.array([probabilities], dtype=np.float32)
+
+    def predict(self, batch, verbose=0):
+        return self._p
+
+
+def _fake_models(monkeypatch, ripeness, defect):
+    """ripeness: (matang, setengah_matang, mentah); defect: (healthy, reject)."""
+    monkeypatch.setattr(
+        api,
+        "_load_models",
+        lambda models_dir, architecture: (
+            _FakeModel(ripeness),
+            _FakeModel(defect),
+            {"class_names": ["matang", "setengah_matang", "mentah"]},
+            {"class_names": ["healthy", "reject"]},
+            lambda pixels: pixels,
+        ),
+    )
+
+
+def test_grade_ignores_defect_head_by_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("TOMATO_GRADE_USES_DEFECT", raising=False)
+    _fake_models(monkeypatch, (0.9, 0.05, 0.05), (0.1, 0.9))
+
+    result = api.predict_image(Image.new("RGB", (10, 10)), tmp_path, "resnext101")
+
+    assert result["grade"] == "A"
+    assert result["grade_basis"] == "ripeness"
+    assert result["defect"]["class"] == "reject"  # keluaran CNN tetap utuh untuk alat evaluasi
+
+
+def test_grade_uses_defect_head_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
+    _fake_models(monkeypatch, (0.9, 0.05, 0.05), (0.1, 0.9))
+
+    result = api.predict_image(Image.new("RGB", (10, 10)), tmp_path, "resnext101")
+
+    assert result["grade"] == "C"
+    assert result["grade_basis"] == "ripeness+defect"
+
+
+def test_unripe_tomato_is_still_grade_c_without_defect_head(monkeypatch, tmp_path):
+    monkeypatch.delenv("TOMATO_GRADE_USES_DEFECT", raising=False)
+    _fake_models(monkeypatch, (0.05, 0.05, 0.9), (0.9, 0.1))
+
+    assert api.predict_image(Image.new("RGB", (10, 10)), tmp_path, "resnext101")["grade"] == "C"
+
+
+def test_predict_endpoint_hides_defect_guess_that_does_not_count(monkeypatch):
+    monkeypatch.delenv("TOMATO_GRADE_USES_DEFECT", raising=False)
+    _fake_models(monkeypatch, (0.1, 0.8, 0.1), (0.1, 0.9))
+    client = TestClient(api.app)
+
+    body = client.post("/predict", files={"file": ("t.jpg", _image_bytes(), "image/jpeg")}).json()
+
+    assert body["grade"] == "B"
+    assert body["defect"]["class"] == "tidak_dinilai" and body["defect"]["confidence"] == 0.0
+    assert body["defect_raw"]["class"] == "reject"
+
+
+def test_predict_endpoint_keeps_defect_when_it_counts(monkeypatch):
+    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
+    _fake_models(monkeypatch, (0.9, 0.05, 0.05), (0.1, 0.9))
+    client = TestClient(api.app)
+
+    body = client.post("/predict", files={"file": ("t.jpg", _image_bytes(), "image/jpeg")}).json()
+
+    assert body["grade"] == "C"
+    assert body["defect"]["class"] == "reject" and "defect_raw" not in body
