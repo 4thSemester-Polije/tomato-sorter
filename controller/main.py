@@ -116,7 +116,7 @@ class Controller:
             frame = self.camera.read_fresh()
 
         from vision.debug import draw_debug
-        from vision.features import extract_features
+        from vision.features import extract_features, extract_pcv_features
         from vision.segmentation import segment
 
         mask = segment(frame, self.background)
@@ -127,8 +127,9 @@ class Controller:
             self.client.event("WARN", "controller", f"Tomat #{id_tomat}: tidak ada objek valid di gambar, tidak dibalas")
             return
 
+        pcv = extract_pcv_features(frame)
         self._set_state("GRADING", id_tomat)
-        result = self._classify(id_tomat, frame, features)
+        result = self._classify(id_tomat, pcv["img_enhanced_bgr"], features)
         if result is None:
             return
         grade, payload = result

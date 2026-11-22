@@ -233,6 +233,10 @@ async def predict(
         pattern=ARCHITECTURE_PATTERN,
         description="resnext50 atau resnext101. Kosong = TOMATO_ARCHITECTURE (bawaan resnext101).",
     ),
+    apply_pcv: bool = Query(
+        default=False,
+        description="Jika true, jalankan pipeline PCV (Crop 1:1 + HSV + Tekstur CLAHE/LAB) sebelum prediksi ResNeXt.",
+    ),
 ) -> dict[str, Any]:
     chosen = architecture or _default_architecture()
     content = await file.read(MAX_IMAGE_BYTES + 1)
@@ -248,7 +252,28 @@ async def predict(
             detail="Uploaded file is not a readable JPG, PNG, or supported HEIC image.",
         ) from exc
 
+    pcv_summary: dict[str, Any] | None = None
+    if apply_pcv:
+        import cv2
+        from vision.features import extract_pcv_features
+
+        frame_bgr = cv2.cvtColor(np.asarray(decoded_image), cv2.COLOR_RGB2BGR)
+        pcv = extract_pcv_features(frame_bgr, crop_size=300)
+        decoded_image = Image.fromarray(pcv["img_enhanced_rgb"])
+        pcv_summary = {
+            "persen_merah": round(pcv["persen_merah"], 2),
+            "persen_oranye": round(pcv["persen_oranye"], 2),
+            "persen_kuning": round(pcv["persen_kuning"], 2),
+            "persen_hijau": round(pcv["persen_hijau"], 2),
+            "persentase_cacat": round(pcv["persentase_cacat"], 2),
+            "jumlah_kontur_cacat": pcv["jumlah_kontur_cacat"],
+            "luas_piksel": round(pcv["luas_piksel"], 1),
+        }
+
     try:
-        return _public_result(predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen))
+        result = predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if pcv_summary is not None:
+        result = {**result, "pcv": pcv_summary}
+    return result

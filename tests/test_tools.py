@@ -38,3 +38,16 @@ def test_process_photos_end_to_end(tmp_path):
     assert res[1]["seg_ok"] == 0
     assert set(res[0].keys()) == set(FEATURE_FIELDS)
     assert (tmp_path / "debug" / "T001_01_20261018.jpg").exists()
+
+
+def test_capture_pcv_process_and_save(tmp_path):
+    from tools.capture_pcv import process_and_save_pcv
+
+    img = np.full((480, 640, 3), (235, 235, 235), dtype=np.uint8)
+    cv2.circle(img, (320, 240), 90, (35, 90, 210), -1)
+    saved = process_and_save_pcv(img, tmp_path, prefix="TEST")
+
+    assert saved["paths"]["latest_enhanced"].is_file()
+    assert saved["paths"]["kontur_cacat"].is_file()
+    assert saved["paths"]["negatif_clahe"].is_file()
+    assert saved["hasil"]["img_enhanced_bgr"].shape == (300, 300, 3)

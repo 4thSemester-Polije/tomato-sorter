@@ -223,3 +223,25 @@ def test_predict_endpoint_keeps_defect_when_it_counts(monkeypatch):
 
     assert body["grade"] == "C"
     assert body["defect"]["class"] == "reject" and "defect_raw" not in body
+
+
+def test_predict_endpoint_with_apply_pcv_returns_pcv_summary(monkeypatch):
+    seen = {}
+
+    def fake_predict(image, models_dir, architecture):
+        seen["size"] = image.size
+        return {"model": "ResNeXt101", "architecture": architecture, "grade": "A"}
+
+    monkeypatch.setattr(api, "predict_image", fake_predict)
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/predict?apply_pcv=true",
+        files={"file": ("tomato.jpg", _image_bytes(), "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert seen["size"] == (300, 300)
+    assert body["grade"] == "A"
+    assert "pcv" in body and "persen_merah" in body["pcv"] and "persentase_cacat" in body["pcv"]

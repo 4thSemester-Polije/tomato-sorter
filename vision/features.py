@@ -141,32 +141,48 @@ def extract_defect_area(img_bgr, mask_clean, dark_threshold: int = 50, erode_siz
     }
 
 
-def extract_pcv_features(img_bgr, crop_size: int = 300, save_crop_path=None) -> dict:
+def extract_pcv_features(
+    img_bgr,
+    crop_size: int = 300,
+    save_crop_path=None,
+    save_enhanced_path=None,
+) -> dict:
     """Proses gambar yang baru ditangkap dari webcam menggunakan alur PCV lengkap (tanpa keputusan grade/prediksi).
 
     Tahapan:
-      1. Masking gabungan HSV (Merah, Kuning/Oranye, Hijau) + Morfologi Opening (5x5) & Closing (15x15).
-      2. Ekstraksi Fitur 1: Persentase warna dominan (Merah, Kuning/Oranye, Hijau).
-      3. Ekstraksi Fitur 2: Kontur terbesar, erosi ring pinggir (15x15), peta area cacat (grayscale < 50), dan persentase cacat.
-      4. Auto-crop 1:1 pas di tengah berdasarkan kontur dan resize ke (crop_size, crop_size).
+      1. Segmentasi warna gabungan HSV + Morfologi Opening (5x5) & Closing (15x15) + Auto-Crop 1:1 (vision.segmentation).
+      2. Fitur Warna HSV: persentase merah, oranye, kuning, dan hijau pada area tomat (vision.color).
+      3. Fitur Tekstur: kanal Hijau (G) -> CLAHE -> Negatif -> Blackhat & Tophat + filter kilap
+         -> kontur tomat (hijau) & kontur cacat (kuning) + rekonstruksi RGB via LAB (vision.texture).
+      4. Hasil utama untuk dikirim ke ResNeXt: `img_enhanced_bgr` / `img_enhanced_rgb`.
     """
-    from vision.segmentation import auto_crop_1to1, segment_hsv_combined
+    from vision.color import extract_hsv_color_features
+    from vision.segmentation import auto_crop_1to1_with_mask, segment_hsv_combined
+    from vision.texture import extract_texture_and_enhance
 
     mask_clean, img_segmented_rgb, img_segmented_bgr = segment_hsv_combined(img_bgr)
-    color_feats = extract_ripeness_color_pct(img_bgr, mask_clean)
-    defect_feats = extract_defect_area(img_bgr, mask_clean)
-    img_cropped_1to1_rgb = auto_crop_1to1(img_segmented_rgb, mask_clean, crop_size=crop_size)
-    img_cropped_1to1_bgr = cv2.cvtColor(img_cropped_1to1_rgb, cv2.COLOR_RGB2BGR)
+    crop_asli_bgr, crop_asli_rgb, crop_seg_rgb, mask_crop_1to1 = auto_crop_1to1_with_mask(
+        img_bgr, mask_clean, crop_size=crop_size
+    )
+    crop_seg_bgr = cv2.cvtColor(crop_seg_rgb, cv2.COLOR_RGB2BGR)
+
+    color_feats = extract_hsv_color_features(crop_asli_bgr, mask_crop_1to1)
+    texture_feats = extract_texture_and_enhance(crop_asli_bgr, mask_crop_1to1)
 
     if save_crop_path is not None:
-        cv2.imwrite(str(save_crop_path), img_cropped_1to1_bgr)
+        cv2.imwrite(str(save_crop_path), crop_seg_bgr)
+    if save_enhanced_path is not None:
+        cv2.imwrite(str(save_enhanced_path), texture_feats["img_enhanced_bgr"])
 
     return {
         "mask_clean": mask_clean,
+        "mask_crop_1to1": mask_crop_1to1,
         "img_segmented_rgb": img_segmented_rgb,
         "img_segmented_bgr": img_segmented_bgr,
-        "img_cropped_1to1_rgb": img_cropped_1to1_rgb,
-        "img_cropped_1to1_bgr": img_cropped_1to1_bgr,
+        "crop_asli_rgb": crop_asli_rgb,
+        "crop_asli_bgr": crop_asli_bgr,
+        "img_cropped_1to1_rgb": crop_seg_rgb,
+        "img_cropped_1to1_bgr": crop_seg_bgr,
         **color_feats,
-        **defect_feats,
+        **texture_feats,
     }
