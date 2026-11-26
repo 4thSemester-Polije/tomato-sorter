@@ -55,7 +55,7 @@
 
 // ================= PENGATURAN SERVO (derajat) =================
 #define SUDUT_TUTUP 0
-#define SUDUT_BUKA  90
+#define SUDUT_BUKA  60
 
 // ================= PENGATURAN WAKTU (ms) - SESUAIKAN DENGAN ALAT =================
 #define WAKTU_SODOK           1000   // Lama servo 1 menyodok buah ke konveyor
@@ -306,7 +306,7 @@ void tanganiBaris(const char* baris) {
 void setup() {
   Serial.begin(115200);
 
-  pinMode(IR_PIN, INPUT);
+  pinMode(IR_PIN, INPUT_PULLUP);
   pinMode(L298N_IN1, OUTPUT);
   pinMode(L298N_IN2, OUTPUT);
   pinMode(L298N_ENA, OUTPUT);           // sama seperti kode lama; harus SEBELUM motorPwmInit()
@@ -380,6 +380,15 @@ void loop() {
 #if MODE_TEST_SERVO
   ujiServoUpdate();
 #endif
+
+  static int irNilaiTerakhir = -1;
+  int irNilai = digitalRead(IR_PIN);
+  if (irNilaiTerakhir >= 0 && irNilai != irNilaiTerakhir) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "IR raw berubah: %d", irNilai);
+    dbg(buf);
+  }
+  irNilaiTerakhir = irNilai;
 
   // Baca baris serial di semua status; balasan ditentukan oleh tanganiBaris()
   char baris[24];
@@ -485,6 +494,13 @@ void mulaiSodok(char grade) {
   lcd.setCursor(0, 1);
   lcd.print("Action: Sodok   ");
 
+  if (grade == 'A') {
+    servoMatang.write(SUDUT_BUKA);
+    dbg("SERVO 3 grade A bergerak bersama pusher");
+  } else if (grade == 'B') {
+    servoSetengah.write(SUDUT_BUKA);
+    dbg("SERVO 2 grade B bergerak bersama pusher");
+  }
   dbg("SERVO 1 menyodok buah ke konveyor");
   servoPusher.write(SUDUT_BUKA);
   tMulai = millis();
@@ -497,13 +513,11 @@ void mulaiMengantar() {
 
   lcd.setCursor(0, 1);
   if (gradeDipilih == 'A') {
-    servoMatang.write(SUDUT_BUKA);
     lcd.print("Jalur : SERVO 3 ");
-    dbg("SERVO 3 terbuka (grade A)");
+    dbg("Jalur SERVO 3 grade A (gate tetap terbuka)");
   } else if (gradeDipilih == 'B') {
-    servoSetengah.write(SUDUT_BUKA);
     lcd.print("Jalur : SERVO 2 ");
-    dbg("SERVO 2 terbuka (grade B)");
+    dbg("Jalur SERVO 2 grade B (gate tetap terbuka)");
   } else {
     lcd.print("Jalur : LURUS   ");
     dbg("Jalur lurus (grade C)");

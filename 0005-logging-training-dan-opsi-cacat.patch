@@ -1,0 +1,1780 @@
+diff --git a/.gitignore b/.gitignore
+index 0774004..7e3ae08 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -25,6 +25,9 @@ models/*
+ !models/.gitkeep
+ !models/README.md
+ 
++# Log run training (train.log, history.csv, report.md, grafik)
++logs/
++
+ # OS
+ .DS_Store
+ Thumbs.db
+diff --git a/docs/TRAINING_CACAT.md b/docs/TRAINING_CACAT.md
+new file mode 100644
+index 0000000..fde9374
+--- /dev/null
++++ b/docs/TRAINING_CACAT.md
+@@ -0,0 +1,129 @@
++# Training model cacat: log, tabel metrik, dan cara menjalankan
++
++Dokumen ini menjelaskan cara melatih model cacat (dan model lain) dengan pencatatan lengkap,
++lewat terminal VS Code maupun Google Colab. Dataset cacat versi baru dan skrip persiapannya
++datang di patch berikutnya; sampai saat itu Anda bisa menguji pencatatan dengan dataset lama
++(lihat "Uji cepat").
++
++## 1. Apa yang dicatat
++
++Setiap run membuat satu folder `logs/<run-name>_<arsitektur>_<waktu>/`:
++
++| File | Isi |
++|---|---|
++| `train.log` | Log teks lengkap (juga tampil di layar): jumlah gambar per kelas, tiap epoch, peringatan, error |
++| `history.csv` | Satu baris per epoch: fase (`head`/`fine_tune`), loss, acc, val_loss, val_acc, learning rate, detik. Ditulis dan di-flush **tiap epoch**, jadi aman walau Colab terputus |
++| `config.json` | Hyperparameter, seed, versi Python/TF/Keras, GPU/CPU, hash commit git |
++| `report.md` | Semua tabel: epoch, jumlah data per split, metrik per kelas, confusion matrix (validasi, test, primer) |
++| `metrics.json` | Versi mesin dari semua metrik |
++| `predictions_primer.csv` | Hanya `--tasks defect`: label, prediksi, dan `p_reject` tiap foto primer |
++| `curves_<task>.png`, `confusion_test_<task>.png` | Kurva loss/akurasi dan confusion matrix (butuh `matplotlib`, dilewati bila tidak ada) |
++| `tensorboard/` | Hanya bila memakai `--tensorboard` |
++
++Folder `logs/` sudah masuk `.gitignore`.
++
++## 2. Opsi CLI
++
++```
++python -m ml.train --data-root <folder Datasets> [opsi]
++
++--tasks ripeness defect     head yang dilatih (bawaan: keduanya)
++--defect-data-dir <folder>  dataset cacat baru: berisi subfolder healthy/ dan reject/
++--split-manifest <csv>      split per grup (kolom: file,split,group); untuk satu task per run
++--models-dir <folder>       tempat model .keras dan .json
++--logs-dir <folder>         folder induk log (bawaan: logs)
++--run-name <nama>           awalan nama folder run
++--tensorboard               tulis juga log TensorBoard
++--overwrite-models          izinkan menimpa model lama saat melatih sebagian task
++--head-epochs / --fine-tune-epochs / --batch-size / --seed
++```
++
++Pengaman: melatih sebagian task (misalnya hanya `defect`) ke folder yang sudah berisi model
++akan **ditolak** kecuali memakai `--models-dir` lain atau `--overwrite-models`. Pakai
++`--models-dir models_cacat_v2` agar model cacat lama tetap aman.
++
++Split manifest: semua gambar yang berasal dari sumber yang sama (satu foto asli, satu video)
++harus punya nilai `group` yang sama. Training akan berhenti dengan pesan jelas bila satu grup
++terbelah ke lebih dari satu split (kebocoran data) atau ada gambar yang tidak tercantum.
++
++## 3. Lewat terminal VS Code (Windows PowerShell)
++
++TensorFlow 2.15.1 di Windows native hanya berjalan di CPU, jadi VS Code cocok untuk uji cepat
++dan evaluasi. Training penuh ResNeXt-101 sebaiknya di Colab GPU.
++
++1. Buka folder `tomato-sorter`, lalu buka terminal (`Ctrl+` `).
++2. Aktifkan venv: `.\.venv\Scripts\Activate.ps1`
++   (bila diblokir: `Set-ExecutionPolicy -Scope Process Bypass`).
++3. Cek versi: `python --version` (harus 3.11) dan
++   `python -c "import tensorflow as tf; print(tf.__version__, tf.config.list_physical_devices('GPU'))"`.
++4. Opsional untuk grafik dan TensorBoard: `pip install matplotlib tensorboard`.
++5. **Uji cepat** (1 epoch, dataset lama, model ke folder terpisah):
++   ```powershell
++   python -m ml.train --data-root "D:\D4 Polije\Semester 5\Project\Data\Datasets" `
++     --tasks defect --models-dir models_smoke --head-epochs 1 --fine-tune-epochs 0 --run-name smoke
++   ```
++6. Pantau log dari terminal kedua (ganti nama folder run):
++   `Get-Content logs\smoke_resnext101_<waktu>\train.log -Wait -Tail 20`
++7. TensorBoard (bila memakai `--tensorboard`): `tensorboard --logdir logs`, buka `http://localhost:6006`.
++8. Setelah selesai, buka `logs\<run>\report.md` (pratinjau Markdown VS Code: `Ctrl+Shift+V`).
++
++## 4. Lewat Google Colab
++
++1. Di PC, taruh di Google Drive: zip repo (tanpa `.venv`, `models`, `data\debug`) dan folder
++   `Datasets` (berisi `Primer` dan dataset yang dipakai).
++2. Colab: `Runtime > Change runtime type > T4 GPU`, lalu `!nvidia-smi`.
++3. Mount Drive:
++   ```python
++   from google.colab import drive; drive.mount('/content/drive')
++   ```
++4. Salin ke disk lokal Colab (lebih cepat dari Drive) dan unzip repo:
++   ```python
++   !cp /content/drive/MyDrive/tomato-sorter.zip /content/ && cd /content && unzip -q tomato-sorter.zip
++   %cd /content/tomato-sorter
++   ```
++5. Cek `!python --version`. `requirements-ml.txt` memakai TensorFlow 2.15.1 yang butuh
++   Python 3.11 (tidak ada paket untuk 3.12). Pakai runtime Colab dengan Python 3.11 seperti saat
++   training sebelumnya.
++6. Install: `%pip install -r requirements-ml.txt matplotlib`
++7. Jalankan, dengan model dan log di Drive supaya tidak hilang saat runtime reset:
++   ```python
++   !python -m ml.train \
++     --data-root "/content/drive/MyDrive/Datasets" \
++     --tasks defect \
++     --defect-data-dir "/content/drive/MyDrive/Datasets/Sekunder/defect_v2" \
++     --split-manifest "/content/drive/MyDrive/Datasets/Sekunder/defect_v2/split_manifest.csv" \
++     --models-dir "/content/drive/MyDrive/tomato-models/defect_v2" \
++     --logs-dir "/content/drive/MyDrive/tomato-logs" \
++     --run-name defect_v2
++   ```
++8. Pantau: `!tail -n 20 /content/drive/MyDrive/tomato-logs/<run>/train.log`, atau
++   `%load_ext tensorboard` lalu `%tensorboard --logdir /content/drive/MyDrive/tomato-logs`
++   (tambahkan `--tensorboard` saat training). Biarkan tab terbuka; Colab gratis memutus sesi idle.
++9. Bila sesi terputus, `history.csv` dan `train.log` yang sudah tertulis tetap ada di Drive.
++   Model terbaik tersimpan otomatis (`ModelCheckpoint`), tetapi training harus dimulai ulang.
++10. Unduh `defect_resnext101.keras` + `.json` dan folder run dari Drive ke repo lokal.
++
++## 5. Membaca laporan
++
++Untuk `--tasks defect`, `report.md` memuat tabel berikut (urutan di file):
++
++- **Epoch**: loss/acc/val_loss/val_acc per epoch. Val_loss yang naik sementara loss turun
++  berarti overfit; keduanya datar di akurasi rendah berarti underfit.
++- **Data**: jumlah gambar per kelas di tiap split.
++- **Validasi / Test sekunder**: precision, recall, F1, confusion matrix. Angka ini hanya
++  mengukur data sekunder; jangan dijadikan bukti model siap pakai.
++- **Primer - model cacat per level**: dari foto primer, berapa yang diprediksi `reject` untuk
++  tiap level cacat sebenarnya, plus rata-rata `p_reject`.
++- **Primer - ringkasan**: AUC dan recall level 3 pada false positive <= 10%.
++- **Primer - gate go/no-go**: lulus bila recall level 3 >= 70% pada false positive <= 10%
++  dan foto level 3 minimal 5. Ambang dipilih dari data yang sama sehingga hasilnya optimistis;
++  tambahkan foto webcam sebagai uji akhir sebelum model dipakai.
++
++## 6. Masalah umum
++
++- `FileExistsError: Model sudah ada`: pakai `--models-dir` lain atau `--overwrite-models`.
++- `matplotlib tidak terpasang`: grafik dilewati; `pip install matplotlib`.
++- `TensorBoard tidak terpasang`: `--tensorboard` dilewati; `pip install tensorboard`.
++- Bagian "Primer - evaluasi gagal" di laporan: model tetap tersimpan, tetapi folder `Primer`
++  (foto HEIC, `Label\Labelv.1.xlsx`, `mapping_nama_file.csv`) tidak ditemukan atau
++  `pillow-heif`/`openpyxl` belum terpasang. Perbaiki lalu evaluasi ulang.
+diff --git a/ml/metrics.py b/ml/metrics.py
+index ee82d74..839ab2c 100644
+--- a/ml/metrics.py
++++ b/ml/metrics.py
+@@ -16,6 +16,8 @@ from sklearn.metrics import (
+     confusion_matrix,
+     f1_score,
+     precision_recall_fscore_support,
++    roc_auc_score,
++    roc_curve,
+ )
+ 
+ GRADE_CLASSES = ("A", "B", "C")
+@@ -57,6 +59,54 @@ def classification_metrics(
+     }
+ 
+ 
++def binary_ranking_metrics(
++    expected: Sequence[int],
++    scores: Sequence[float],
++    max_fpr: float = 0.10,
++    threshold: float = 0.5,
++) -> dict[str, Any]:
++    """AUC dan dua titik operasi untuk positif (1) vs negatif (0).
++
++    - fixed_threshold: recall dan false positive rate pada ambang tetap (bawaan 0,5).
++    - constrained: recall tertinggi dengan false positive rate <= max_fpr. Ambangnya dipilih
++      dari data yang sama, jadi angkanya optimistis; pakai sebagai indikasi, bukan hasil final.
++    """
++    truth = np.asarray(expected, dtype=int)
++    score = np.asarray(scores, dtype=float)
++    if truth.shape != score.shape:
++        raise ValueError("expected and scores must have the same length.")
++    positives = int(truth.sum())
++    negatives = int(truth.size - positives)
++
++    def operating_point(cut: float) -> dict[str, Any]:
++        predicted = score >= cut
++        true_positive = int(np.sum(predicted & (truth == 1)))
++        false_positive = int(np.sum(predicted & (truth == 0)))
++        return {
++            "threshold": None if not np.isfinite(cut) else float(cut),
++            "true_positive": true_positive,
++            "false_positive": false_positive,
++            "recall": (true_positive / positives) if positives else None,
++            "false_positive_rate": (false_positive / negatives) if negatives else None,
++        }
++
++    result: dict[str, Any] = {
++        "positives": positives,
++        "negatives": negatives,
++        "max_fpr": max_fpr,
++        "auc": None,
++        "fixed_threshold": operating_point(threshold),
++        "constrained": None,
++    }
++    if positives and negatives:
++        result["auc"] = float(roc_auc_score(truth, score))
++        fpr, tpr, thresholds = roc_curve(truth, score)
++        allowed = np.flatnonzero(fpr <= max_fpr)
++        best = allowed[int(np.argmax(tpr[allowed]))]
++        result["constrained"] = operating_point(float(thresholds[best]))
++    return result
++
++
+ def grade_metrics(expected: Sequence[str], predicted: Sequence[str]) -> dict[str, Any]:
+     true_indices = [GRADE_CLASSES.index(value) for value in expected]
+     predicted_indices = [GRADE_CLASSES.index(value) for value in predicted]
+diff --git a/ml/run_logging.py b/ml/run_logging.py
+new file mode 100644
+index 0000000..72d2c61
+--- /dev/null
++++ b/ml/run_logging.py
+@@ -0,0 +1,478 @@
++"""Pencatatan satu run training: log teks, CSV per epoch, tabel metrik, dan laporan Markdown.
++
++Semua yang ditulis ke disk di-flush per epoch, jadi log tetap ada walaupun sesi (misalnya
++Google Colab) terputus di tengah training.
++"""
++
++from __future__ import annotations
++
++import csv
++import json
++import logging
++import os
++import platform
++import subprocess
++import sys
++import time
++from datetime import datetime
++from importlib import metadata as importlib_metadata
++from pathlib import Path
++from typing import Any, Mapping, Sequence
++
++logger = logging.getLogger(__name__)
++
++HISTORY_COLUMNS = (
++    "task",
++    "phase",
++    "epoch",
++    "phase_epoch",
++    "loss",
++    "accuracy",
++    "val_loss",
++    "val_accuracy",
++    "lr",
++    "seconds",
++)
++LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
++_TRACKED_PACKAGES = (
++    "tensorflow",
++    "keras",
++    "numpy",
++    "scikit-learn",
++    "Pillow",
++    "image-classifiers",
++)
++
++
++# --------------------------------------------------------------------------- tabel
++
++
++def format_value(value: Any, digits: int = 4) -> str:
++    if value is None:
++        return "-"
++    if isinstance(value, bool):
++        return str(value)
++    if isinstance(value, int):
++        return str(value)
++    if isinstance(value, float):
++        if value != 0 and abs(value) < 1e-3:
++            return f"{value:.1e}"
++        return f"{value:.{digits}f}"
++    return str(value)
++
++
++def _is_numeric(value: Any) -> bool:
++    return value is None or (
++        isinstance(value, (int, float)) and not isinstance(value, bool)
++    )
++
++
++def render_table(
++    headers: Sequence[str], rows: Sequence[Sequence[Any]], digits: int = 4
++) -> str:
++    """Tabel Markdown yang juga rapi dibaca di terminal (kolom diratakan dengan spasi)."""
++    cells = [
++        [format_value(value, digits).replace("|", "\\|") for value in row]
++        for row in rows
++    ]
++    header_cells = [str(header).replace("|", "\\|") for header in headers]
++    columns = len(header_cells)
++    for row in cells:
++        if len(row) != columns:
++            raise ValueError("Every row must have as many cells as there are headers.")
++    right = [
++        bool(rows) and all(_is_numeric(row[index]) for row in rows)
++        for index in range(columns)
++    ]
++    widths = [
++        max(3, len(header_cells[index]), *(len(row[index]) for row in cells))
++        for index in range(columns)
++    ]
++
++    def line(values: Sequence[str]) -> str:
++        padded = [
++            values[index].rjust(widths[index])
++            if right[index]
++            else values[index].ljust(widths[index])
++            for index in range(columns)
++        ]
++        return "| " + " | ".join(padded) + " |"
++
++    separator = (
++        "|"
++        + "|".join(
++            ("-" * (widths[index] + 1) + ":") if right[index] else ("-" * (widths[index] + 2))
++            for index in range(columns)
++        )
++        + "|"
++    )
++    return "\n".join([line(header_cells), separator, *(line(row) for row in cells)])
++
++
++def class_metrics_table(metrics: Mapping[str, Any]) -> str:
++    """Precision, recall, F1, dan support per kelas dari ml.metrics.classification_metrics."""
++    report = metrics["classification_report"]
++    rows: list[list[Any]] = []
++    total_support = 0
++    for name in metrics["classes"]:
++        entry = report[name]
++        total_support += int(entry["support"])
++        rows.append(
++            [name, entry["precision"], entry["recall"], entry["f1-score"], int(entry["support"])]
++        )
++    rows.append(["accuracy", None, None, float(metrics["accuracy"]), total_support])
++    for key in ("macro avg", "weighted avg"):
++        if key in report:
++            entry = report[key]
++            rows.append(
++                [key, entry["precision"], entry["recall"], entry["f1-score"], int(entry["support"])]
++            )
++    return render_table(["kelas", "precision", "recall", "f1", "support"], rows)
++
++
++def confusion_table(metrics: Mapping[str, Any]) -> str:
++    """Confusion matrix (baris = label sebenarnya, kolom = prediksi) plus recall per baris."""
++    classes = list(metrics["classes"])
++    matrix = metrics["confusion_matrix"]
++    rows: list[list[Any]] = []
++    for index, name in enumerate(classes):
++        total = sum(matrix[index])
++        rows.append(
++            [name, *matrix[index], (matrix[index][index] / total) if total else None]
++        )
++    return render_table(["sebenarnya \\ prediksi", *classes, "recall"], rows)
++
++
++def history_table(rows: Sequence[Mapping[str, Any]]) -> str:
++    table_rows = [
++        [
++            row["phase"],
++            int(row["epoch"]),
++            row.get("loss"),
++            row.get("accuracy"),
++            row.get("val_loss"),
++            row.get("val_accuracy"),
++            row.get("lr"),
++            row.get("seconds"),
++        ]
++        for row in rows
++    ]
++    return render_table(
++        ["fase", "epoch", "loss", "acc", "val_loss", "val_acc", "lr", "detik"],
++        table_rows,
++        digits=4,
++    )
++
++
++def metric_sections(prefix: str, metrics: Mapping[str, Any]) -> list[tuple[str, str]]:
++    return [
++        (f"{prefix} - metrik per kelas", class_metrics_table(metrics)),
++        (f"{prefix} - confusion matrix", confusion_table(metrics)),
++    ]
++
++
++# --------------------------------------------------------------------------- history
++
++
++def read_history(path: Path) -> list[dict[str, Any]]:
++    if not Path(path).is_file():
++        return []
++    rows: list[dict[str, Any]] = []
++    with Path(path).open(newline="", encoding="utf-8") as file:
++        for raw in csv.DictReader(file):
++            row: dict[str, Any] = {"task": raw["task"], "phase": raw["phase"]}
++            for key in HISTORY_COLUMNS[2:]:
++                text = raw.get(key, "")
++                row[key] = float(text) if text not in ("", None) else None
++            rows.append(row)
++    return rows
++
++
++class EpochRecorder:
++    """Tulis satu baris CSV per epoch dan langsung flush ke disk (aman bila sesi putus)."""
++
++    def __init__(
++        self, history_path: Path, task: str, phase: str, epoch_offset: int = 0
++    ) -> None:
++        self.history_path = Path(history_path)
++        self.task = task
++        self.phase = phase
++        self.epoch_offset = epoch_offset
++
++    def record(
++        self,
++        phase_epoch: int,
++        logs: Mapping[str, Any],
++        lr: float | None = None,
++        seconds: float | None = None,
++    ) -> dict[str, Any]:
++        def number(key: str) -> float | None:
++            value = logs.get(key)
++            return float(value) if value is not None else None
++
++        row: dict[str, Any] = {
++            "task": self.task,
++            "phase": self.phase,
++            "epoch": self.epoch_offset + phase_epoch,
++            "phase_epoch": phase_epoch,
++            "loss": number("loss"),
++            "accuracy": number("accuracy"),
++            "val_loss": number("val_loss"),
++            "val_accuracy": number("val_accuracy"),
++            "lr": lr,
++            "seconds": seconds,
++        }
++        self.history_path.parent.mkdir(parents=True, exist_ok=True)
++        new_file = not self.history_path.is_file() or self.history_path.stat().st_size == 0
++        with self.history_path.open("a", newline="", encoding="utf-8") as file:
++            writer = csv.DictWriter(file, fieldnames=HISTORY_COLUMNS)
++            if new_file:
++                writer.writeheader()
++            writer.writerow({key: ("" if value is None else value) for key, value in row.items()})
++            file.flush()
++            os.fsync(file.fileno())
++        logger.info(
++            "[%s/%s] epoch %d | loss %s acc %s | val_loss %s val_acc %s | lr %s | %ss",
++            self.task,
++            self.phase,
++            row["epoch"],
++            format_value(row["loss"]),
++            format_value(row["accuracy"]),
++            format_value(row["val_loss"]),
++            format_value(row["val_accuracy"]),
++            format_value(row["lr"]),
++            format_value(row["seconds"], 1),
++        )
++        return row
++
++
++def make_keras_callback(recorder: EpochRecorder) -> Any:
++    """Adapter tipis: meneruskan akhir tiap epoch Keras ke EpochRecorder."""
++    import tensorflow as tf
++
++    class _EpochLogCallback(tf.keras.callbacks.Callback):
++        def __init__(self) -> None:
++            super().__init__()
++            self._started = time.perf_counter()
++
++        def on_epoch_begin(self, epoch: int, logs: Any = None) -> None:
++            self._started = time.perf_counter()
++
++        def on_epoch_end(self, epoch: int, logs: Any = None) -> None:
++            learning_rate: float | None
++            try:
++                value = self.model.optimizer.learning_rate
++                learning_rate = float(value.numpy()) if hasattr(value, "numpy") else float(value)
++            except Exception:  # noqa: BLE001 - jadwal LR bukan angka tunggal; kolom dikosongkan
++                learning_rate = None
++            recorder.record(
++                epoch + 1,
++                logs or {},
++                learning_rate,
++                time.perf_counter() - self._started,
++            )
++
++    return _EpochLogCallback()
++
++
++# --------------------------------------------------------------------------- run
++
++
++def _git_info() -> dict[str, Any]:
++    root = Path(__file__).resolve().parent.parent
++    info: dict[str, Any] = {"commit": None, "dirty": None}
++    try:
++        commit = subprocess.run(
++            ["git", "rev-parse", "HEAD"],
++            capture_output=True, text=True, timeout=5, cwd=root, check=False,
++        )
++        if commit.returncode == 0:
++            info["commit"] = commit.stdout.strip()
++            status = subprocess.run(
++                ["git", "status", "--porcelain"],
++                capture_output=True, text=True, timeout=5, cwd=root, check=False,
++            )
++            info["dirty"] = bool(status.stdout.strip()) if status.returncode == 0 else None
++    except (OSError, subprocess.SubprocessError):
++        pass
++    return info
++
++
++def environment_info() -> dict[str, Any]:
++    packages: dict[str, str | None] = {}
++    for name in _TRACKED_PACKAGES:
++        try:
++            packages[name] = importlib_metadata.version(name)
++        except importlib_metadata.PackageNotFoundError:
++            packages[name] = None
++    return {
++        "python": sys.version.split()[0],
++        "platform": platform.platform(),
++        "packages": packages,
++        "git": _git_info(),
++    }
++
++
++class RunLog:
++    """Satu folder run: train.log, history.csv, config.json, metrics.json, report.md."""
++
++    def __init__(self, directory: Path) -> None:
++        self.directory = Path(directory)
++        self.directory.mkdir(parents=True, exist_ok=True)
++        self._handlers: list[logging.Handler] = []
++        self._previous_level: int | None = None
++
++    @property
++    def log_path(self) -> Path:
++        return self.directory / "train.log"
++
++    @property
++    def history_path(self) -> Path:
++        return self.directory / "history.csv"
++
++    @property
++    def report_path(self) -> Path:
++        return self.directory / "report.md"
++
++    @property
++    def metrics_path(self) -> Path:
++        return self.directory / "metrics.json"
++
++    def attach(self, console: bool = True) -> None:
++        """Alirkan semua log (logger.info/warning di seluruh paket ml) ke train.log dan layar."""
++        if self._handlers:
++            return
++        root = logging.getLogger()
++        self._previous_level = root.level
++        if root.level == logging.NOTSET or root.level > logging.INFO:
++            root.setLevel(logging.INFO)
++        file_handler = logging.FileHandler(self.log_path, encoding="utf-8")
++        file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
++        self._handlers.append(file_handler)
++        if console:
++            console_handler = logging.StreamHandler(sys.stdout)
++            console_handler.setFormatter(logging.Formatter("%(message)s"))
++            self._handlers.append(console_handler)
++        for handler in self._handlers:
++            root.addHandler(handler)
++
++    def close(self) -> None:
++        root = logging.getLogger()
++        for handler in self._handlers:
++            root.removeHandler(handler)
++            handler.close()
++        self._handlers = []
++        if self._previous_level is not None:
++            root.setLevel(self._previous_level)
++            self._previous_level = None
++
++    def write_config(self, config: Mapping[str, Any]) -> None:
++        payload = {**config, "environment": environment_info()}
++        (self.directory / "config.json").write_text(
++            json.dumps(payload, indent=2, ensure_ascii=False, default=str),
++            encoding="utf-8",
++        )
++
++    def write_metrics(self, metrics: Mapping[str, Any]) -> None:
++        self.metrics_path.write_text(
++            json.dumps(metrics, indent=2, ensure_ascii=False, default=str),
++            encoding="utf-8",
++        )
++
++    def write_report(self, title: str, sections: Sequence[tuple[str, str]]) -> None:
++        parts = [f"# {title}", ""]
++        for heading, body in sections:
++            parts += [f"## {heading}", "", body, ""]
++        self.report_path.write_text("\n".join(parts), encoding="utf-8")
++        logger.info("Laporan ditulis: %s", self.report_path)
++
++
++def start_run(
++    logs_dir: Path,
++    run_name: str,
++    architecture: str,
++    config: Mapping[str, Any],
++    console: bool = True,
++) -> RunLog:
++    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
++    base = Path(logs_dir) / f"{run_name}_{architecture}_{stamp}"
++    directory, counter = base, 1
++    while directory.exists():
++        counter += 1
++        directory = Path(f"{base}-{counter}")
++    run = RunLog(directory)
++    run.attach(console=console)
++    run.write_config(config)
++    logger.info("Run log: %s", run.directory)
++    return run
++
++
++# --------------------------------------------------------------------------- grafik
++
++
++def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
++    """Kurva loss dan akurasi (train vs val) per task. Dilewati bila matplotlib tidak ada."""
++    try:
++        import matplotlib
++
++        matplotlib.use("Agg")
++        import matplotlib.pyplot as plt
++    except ImportError:
++        logger.warning("matplotlib tidak terpasang; grafik dilewati (pip install matplotlib).")
++        return []
++    rows = read_history(history_path)
++    written: list[Path] = []
++    for task in dict.fromkeys(row["task"] for row in rows):
++        task_rows = [row for row in rows if row["task"] == task]
++        epochs = [row["epoch"] for row in task_rows]
++        figure, axes = plt.subplots(1, 2, figsize=(11, 4))
++        for axis, (train_key, val_key, title) in zip(
++            axes,
++            (("loss", "val_loss", "Loss"), ("accuracy", "val_accuracy", "Akurasi")),
++        ):
++            axis.plot(epochs, [row[train_key] for row in task_rows], marker="o", label="train")
++            axis.plot(epochs, [row[val_key] for row in task_rows], marker="o", label="validasi")
++            switch = next(
++                (row["epoch"] for row in task_rows if row["phase"] != task_rows[0]["phase"]),
++                None,
++            )
++            if switch is not None:
++                axis.axvline(switch - 0.5, color="gray", linestyle="--", label="mulai fine-tune")
++            axis.set_title(f"{title} - {task}")
++            axis.set_xlabel("epoch")
++            axis.legend()
++            axis.grid(alpha=0.3)
++        path = Path(output_dir) / f"curves_{task}.png"
++        figure.tight_layout()
++        figure.savefig(path, dpi=130)
++        plt.close(figure)
++        written.append(path)
++    return written
++
++
++def plot_confusion(metrics: Mapping[str, Any], output_path: Path, title: str) -> Path | None:
++    try:
++        import matplotlib
++
++        matplotlib.use("Agg")
++        import matplotlib.pyplot as plt
++    except ImportError:
++        return None
++    classes = list(metrics["classes"])
++    matrix = metrics["confusion_matrix"]
++    figure, axis = plt.subplots(figsize=(1.6 + 1.2 * len(classes), 1.4 + 1.1 * len(classes)))
++    axis.imshow(matrix, cmap="Blues")
++    axis.set_xticks(range(len(classes)), labels=classes)
++    axis.set_yticks(range(len(classes)), labels=classes)
++    axis.set_xlabel("prediksi")
++    axis.set_ylabel("sebenarnya")
++    axis.set_title(title)
++    peak = max((max(row) for row in matrix), default=0)
++    for i, row in enumerate(matrix):
++        for j, value in enumerate(row):
++            axis.text(j, i, str(value), ha="center", va="center",
++                      color="white" if peak and value > peak / 2 else "black")
++    figure.tight_layout()
++    figure.savefig(output_path, dpi=130)
++    plt.close(figure)
++    return Path(output_path)
+diff --git a/ml/train.py b/ml/train.py
+index e8f7539..a6284d7 100644
+--- a/ml/train.py
++++ b/ml/train.py
+@@ -5,6 +5,7 @@ from __future__ import annotations
+ import argparse
+ import csv
+ import hashlib
++import importlib.util
+ import json
+ import logging
+ import time
+@@ -18,6 +19,7 @@ from sklearn.model_selection import train_test_split
+ 
+ from ml.metrics import (
+     benchmark_latency,
++    binary_ranking_metrics,
+     classification_metrics,
+     count_parameters,
+     describe_device,
+@@ -41,6 +43,18 @@ from ml.resnext import (
+     validate_architecture,
+ )
+ from ml.rubric import grade_from_levels
++from ml.run_logging import (
++    EpochRecorder,
++    RunLog,
++    history_table,
++    make_keras_callback,
++    metric_sections,
++    plot_confusion,
++    plot_curves,
++    read_history,
++    render_table,
++    start_run,
++)
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -50,6 +64,13 @@ HEAD_LEARNING_RATE = 1e-3
+ FINE_TUNE_LEARNING_RATE = 1e-5
+ EARLY_STOPPING_PATIENCE = 3
+ 
++TASKS = ("ripeness", "defect")
++
++# Gerbang go/no-go model cacat pada foto primer (lihat docs/TRAINING_CACAT.md).
++GATE_MIN_RECALL = 0.70
++GATE_MAX_FPR = 0.10
++GATE_MIN_POSITIVES = 5  # di bawah ini, recall terlalu kasar untuk dijadikan keputusan
++
+ 
+ @dataclass(frozen=True)
+ class Sample:
+@@ -126,6 +147,119 @@ def _split_samples(
+     return list(train), list(validation), list(test)
+ 
+ 
++def _split_samples_from_manifest(
++    samples: Sequence[Sample],
++    manifest_path: str | Path,
++) -> tuple[list[Sample], list[Sample], list[Sample]]:
++    """Pakai split dari CSV (kolom: file, split, group) alih-alih split acak.
++
++    `file` berbentuk "<kelas>/<nama file>". Semua anggota satu `group` (misalnya satu foto sumber
++    atau satu video) wajib berada di split yang sama, supaya tidak ada kebocoran near-duplicate.
++    """
++    path = Path(manifest_path)
++    if not path.is_file():
++        raise FileNotFoundError(f"Split manifest not found: {path}")
++    assignments: dict[str, str] = {}
++    group_splits: dict[str, set[str]] = {}
++    with path.open(newline="", encoding="utf-8-sig") as file:
++        reader = csv.DictReader(file)
++        missing_columns = {"file", "split", "group"} - set(reader.fieldnames or [])
++        if missing_columns:
++            raise ValueError(
++                f"Split manifest {path} lacks column(s): {sorted(missing_columns)}."
++            )
++        for row in reader:
++            split = row["split"].strip().lower()
++            if split not in {"train", "validation", "test"}:
++                raise ValueError(f"Unknown split {row['split']!r} in {path}.")
++            assignments[row["file"].strip().replace("\\", "/")] = split
++            group_splits.setdefault(row["group"].strip(), set()).add(split)
++
++    leaking = sorted(group for group, splits in group_splits.items() if len(splits) > 1)
++    if leaking:
++        raise ValueError(
++            f"{len(leaking)} group(s) span more than one split (data leakage), "
++            f"for example: {leaking[:5]}."
++        )
++
++    parts: dict[str, list[Sample]] = {"train": [], "validation": [], "test": []}
++    unassigned: list[str] = []
++    for sample in samples:
++        key = f"{sample.label}/{sample.path.name}"
++        split = assignments.get(key)
++        if split is None:
++            unassigned.append(key)
++        else:
++            parts[split].append(sample)
++    if unassigned:
++        raise ValueError(
++            f"{len(unassigned)} image(s) are not listed in the split manifest, "
++            f"for example: {unassigned[:5]}."
++        )
++    for name, part in parts.items():
++        if len({sample.label for sample in part}) < 2:
++            raise ValueError(f"Split {name!r} must contain both classes; found {len(part)} image(s).")
++    return parts["train"], parts["validation"], parts["test"]
++
++
++def _split_percentages(
++    train: Sequence[Sample],
++    validation: Sequence[Sample],
++    test: Sequence[Sample],
++    from_manifest: bool,
++) -> dict[str, int]:
++    if not from_manifest:
++        return {"train": 70, "validation": 15, "test": 15}
++    total = len(train) + len(validation) + len(test)
++    return {
++        "train": round(100 * len(train) / total),
++        "validation": round(100 * len(validation) / total),
++        "test": round(100 * len(test) / total),
++    }
++
++
++def _log_split_summary(
++    task: str,
++    train: Sequence[Sample],
++    validation: Sequence[Sample],
++    test: Sequence[Sample],
++) -> None:
++    for name, part in (("train", train), ("validation", validation), ("test", test)):
++        logger.info(
++            "[%s] %s: %d gambar %s",
++            task,
++            name,
++            len(part),
++            dict(sorted(Counter(sample.label for sample in part).items())),
++        )
++
++
++def _epoch_callbacks(
++    run: RunLog | None,
++    task: str,
++    phase: str,
++    epoch_offset: int,
++    tensorboard: bool,
++) -> list[Any]:
++    """Callback pencatat per epoch (CSV + log) dan, opsional, TensorBoard."""
++    if run is None:
++        return []
++    callbacks: list[Any] = [
++        make_keras_callback(EpochRecorder(run.history_path, task, phase, epoch_offset))
++    ]
++    if tensorboard and importlib.util.find_spec("tensorboard") is None:
++        logger.warning("TensorBoard tidak terpasang; --tensorboard dilewati (pip install tensorboard).")
++    elif tensorboard:
++        import tensorflow as tf
++
++        callbacks.append(
++            tf.keras.callbacks.TensorBoard(
++                log_dir=str(run.directory / "tensorboard" / f"{task}_{phase}")
++            )
++        )
++    return callbacks
++
++
+ def _load_tensorflow_dataset(
+     samples: Sequence[Sample],
+     class_to_index: dict[str, int],
+@@ -183,13 +317,22 @@ def _train_task(
+     fine_tune_epochs: int,
+     reuse_existing: bool = False,
+     architecture: str = DEFAULT_ARCHITECTURE,
++    split_manifest: Path | None = None,
++    run: RunLog | None = None,
++    tensorboard: bool = False,
+ ) -> tuple[Any, dict[str, Any]]:
+     import tensorflow as tf
+ 
+     validate_architecture(architecture)
+     # Seed global (Python, NumPy, TensorFlow) agar tiap arsitektur mulai dari kondisi acak yang sama.
+     tf.keras.utils.set_random_seed(seed)
+-    train_samples, validation_samples, test_samples = _split_samples(samples, seed)
++    if split_manifest is not None:
++        train_samples, validation_samples, test_samples = _split_samples_from_manifest(
++            samples, split_manifest
++        )
++    else:
++        train_samples, validation_samples, test_samples = _split_samples(samples, seed)
++    _log_split_summary(task, train_samples, validation_samples, test_samples)
+     class_to_index = {name: index for index, name in enumerate(class_names)}
+     output_path.parent.mkdir(parents=True, exist_ok=True)
+     checkpoint_reused = reuse_existing and output_path.is_file()
+@@ -238,12 +381,13 @@ def _train_task(
+             train_data,
+             validation_data=validation_data,
+             epochs=head_epochs,
+-            callbacks=callbacks,
++            callbacks=callbacks + _epoch_callbacks(run, task, "head", 0, tensorboard),
+             verbose=2,
+         )
+         history.update(
+             {key: [float(value) for value in values] for key, values in fit_history.history.items()}
+         )
++        completed_epochs = len(fit_history.history.get("loss", []))
+         if fine_tune_epochs > 0:
+             backbone.trainable = True
+             for layer in backbone.layers[:-FINE_TUNE_LAYERS]:
+@@ -260,7 +404,8 @@ def _train_task(
+                 train_data,
+                 validation_data=validation_data,
+                 epochs=fine_tune_epochs,
+-                callbacks=callbacks,
++                callbacks=callbacks
++                + _epoch_callbacks(run, task, "fine_tune", completed_epochs, tensorboard),
+                 verbose=2,
+             )
+             history.update(
+@@ -293,7 +438,10 @@ def _train_task(
+         },
+         "parameters": count_parameters([model]),
+         "training_seconds": training_seconds,
+-        "split_percentages": {"train": 70, "validation": 15, "test": 15},
++        "split_percentages": _split_percentages(
++            train_samples, validation_samples, test_samples, split_manifest is not None
++        ),
++        "split_source": "manifest" if split_manifest is not None else "stratified_random",
+         "unique_images": {
+             "total": len(samples),
+             "train": len(train_samples),
+@@ -319,6 +467,7 @@ def _train_task(
+             ],
+         },
+         "test_metrics": _metric_report(model, test_data, class_names),
++        "validation_metrics": _metric_report(model, validation_data, class_names),
+         "history": history,
+         "checkpoint_reused": checkpoint_reused,
+     }
+@@ -450,26 +599,237 @@ def _evaluate_primary(
+     }
+ 
+ 
+-def train(
+-    data_root: str | Path,
+-    models_dir: str | Path = "models",
+-    seed: int = 42,
+-    batch_size: int = 16,
+-    head_epochs: int = 8,
+-    fine_tune_epochs: int = 5,
+-    reuse_existing: bool = False,
++def _evaluate_defect_primary(
++    data_root: Path,
++    defect_model: Any,
++    class_names: Sequence[str],
+     architecture: str = DEFAULT_ARCHITECTURE,
+ ) -> dict[str, Any]:
+-    """Train both heads and evaluate on secondary holdouts and primary photos."""
+-    validate_architecture(architecture)
+-    if batch_size < 1:
+-        raise ValueError("batch_size must be greater than zero.")
+-    if head_epochs < 1:
+-        raise ValueError("head_epochs must be greater than zero.")
+-    if fine_tune_epochs < 0:
+-        raise ValueError("fine_tune_epochs cannot be negative.")
+-    root = Path(data_root)
+-    output_directory = Path(models_dir)
++    """Evaluasi khusus model cacat pada foto primer, termasuk p_reject per foto."""
++    from PIL import Image
++
++    preprocess_input = get_preprocess_input(architecture)
++    reject_index = list(class_names).index("reject")
++    rows: list[dict[str, Any]] = []
++    for path, labels in _primary_test_samples(data_root):
++        with Image.open(path) as source:
++            image = source.convert("RGB").resize((INPUT_SIZE[1], INPUT_SIZE[0]))
++            pixels = np.asarray(image, dtype=np.float32)
++        probabilities = defect_model.predict(
++            preprocess_input(np.expand_dims(pixels, axis=0)), verbose=0
++        )[0]
++        rows.append(
++            {
++                "file": path.name,
++                "actual_defect_level": int(labels["tingkat_cacat"]),
++                "p_reject": float(probabilities[reject_index]),
++                "predicted": class_names[int(np.argmax(probabilities))],
++            }
++        )
++
++    per_level: dict[int, dict[str, Any]] = {}
++    for level in (1, 2, 3):
++        scores = [row["p_reject"] for row in rows if row["actual_defect_level"] == level]
++        rejected = sum(
++            1 for row in rows
++            if row["actual_defect_level"] == level and row["predicted"] == "reject"
++        )
++        per_level[level] = {
++            "images": len(scores),
++            "predicted_reject": rejected,
++            "predicted_reject_rate": (rejected / len(scores)) if scores else None,
++            "mean_p_reject": float(np.mean(scores)) if scores else None,
++            "median_p_reject": float(np.median(scores)) if scores else None,
++        }
++
++    binary = [row for row in rows if row["actual_defect_level"] in (1, 3)]
++    level_1_vs_3 = binary_ranking_metrics(
++        [1 if row["actual_defect_level"] == 3 else 0 for row in binary],
++        [row["p_reject"] for row in binary],
++        max_fpr=GATE_MAX_FPR,
++    )
++    level_1_vs_2_or_3 = binary_ranking_metrics(
++        [0 if row["actual_defect_level"] == 1 else 1 for row in rows],
++        [row["p_reject"] for row in rows],
++        max_fpr=GATE_MAX_FPR,
++    )
++    constrained = level_1_vs_3["constrained"]
++    enough_positives = level_1_vs_3["positives"] >= GATE_MIN_POSITIVES
++    passed = bool(
++        enough_positives
++        and constrained is not None
++        and constrained["recall"] is not None
++        and constrained["recall"] >= GATE_MIN_RECALL
++    )
++    return {
++        "images": len(rows),
++        "per_level": per_level,
++        "level1_vs_level3": level_1_vs_3,
++        "level1_vs_level2_or_3": level_1_vs_2_or_3,
++        "gate": {
++            "min_recall": GATE_MIN_RECALL,
++            "max_fpr": GATE_MAX_FPR,
++            "min_positives": GATE_MIN_POSITIVES,
++            "enough_positives": enough_positives,
++            "passed": passed,
++        },
++        "rows": rows,
++    }
++
++
++def _defect_primary_sections(primary: dict[str, Any]) -> list[tuple[str, str]]:
++    level_rows = [
++        [
++            f"level {level}",
++            values["images"],
++            values["predicted_reject"],
++            values["predicted_reject_rate"],
++            values["mean_p_reject"],
++            values["median_p_reject"],
++        ]
++        for level, values in sorted(primary["per_level"].items())
++    ]
++    ranking = primary["level1_vs_level3"]
++    fixed = ranking["fixed_threshold"]
++    constrained = ranking["constrained"] or {}
++    summary_rows = [
++        ["jumlah level 1 / level 3", None, f"{ranking['negatives']} / {ranking['positives']}"],
++        ["AUC level 1 vs 3", ranking["auc"], ""],
++        ["AUC level 1 vs 2+3", primary["level1_vs_level2_or_3"]["auc"], ""],
++        ["recall level 3 (ambang 0,5)", fixed["recall"], ""],
++        ["false positive rate level 1 (ambang 0,5)", fixed["false_positive_rate"], ""],
++        [
++            f"recall level 3 @ FPR <= {ranking['max_fpr']:.0%}",
++            constrained.get("recall"),
++            f"ambang {format_threshold(constrained.get('threshold'))}",
++        ],
++    ]
++    gate = primary["gate"]
++    if not gate["enough_positives"]:
++        verdict = f"TIDAK DAPAT DINILAI (foto level 3 kurang dari {gate['min_positives']})"
++    else:
++        verdict = "LULUS" if gate["passed"] else "BELUM LULUS"
++    gate_text = (
++        f"Syarat: recall level 3 >= {gate['min_recall']:.0%} pada false positive <= "
++        f"{gate['max_fpr']:.0%} di foto primer.\n"
++        f"Hasil: **{verdict}**.\n\n"
++        "Catatan: ambang dipilih dari data yang sama sehingga angkanya optimistis, dan jumlah "
++        f"positif hanya {ranking['positives']} foto, jadi anggap ini indikasi kasar."
++    )
++    return [
++        (
++            "Primer - model cacat per level cacat sebenarnya",
++            render_table(
++                ["level", "n", "diprediksi reject", "proporsi", "mean p_reject", "median p_reject"],
++                level_rows,
++            ),
++        ),
++        (
++            "Primer - ringkasan model cacat",
++            render_table(["ukuran", "nilai", "keterangan"], summary_rows),
++        ),
++        ("Primer - gate go/no-go", gate_text),
++    ]
++
++
++def format_threshold(value: float | None) -> str:
++    return "-" if value is None else f"{value:.4f}"
++
++
++def _split_count_table(metadata: dict[str, Any]) -> str:
++    classes = metadata["class_names"]
++    rows = []
++    for split in ("train", "validation", "test"):
++        counts = Counter(entry["class"] for entry in metadata["split_manifest"][split])
++        rows.append([split, sum(counts.values()), *(counts.get(name, 0) for name in classes)])
++    return render_table(["split", "total", *classes], rows)
++
++
++def _write_run_outputs(
++    run: RunLog,
++    selected: Sequence[str],
++    metadata: dict[str, dict[str, Any]],
++    report: dict[str, Any],
++    primary_defect: dict[str, Any] | None,
++    primary_error: str | None,
++) -> None:
++    """Tulis report.md (tabel), metrics.json, predictions_primer.csv, dan grafik ke folder run."""
++    history = read_history(run.history_path)
++    sections: list[tuple[str, str]] = []
++    for task in selected:
++        task_history = [row for row in history if row["task"] == task]
++        if task_history:
++            sections.append((f"Epoch - {task}", history_table(task_history)))
++        sections.append((f"Data - {task}", _split_count_table(metadata[task])))
++        if "validation_metrics" in metadata[task]:
++            sections += metric_sections(
++                f"Validasi sekunder ({task})", metadata[task]["validation_metrics"]
++            )
++        sections += metric_sections(f"Test sekunder ({task})", metadata[task]["test_metrics"])
++
++    primary = report.get("primary_independent_test")
++    if primary:
++        sections += metric_sections("Primer - grade", primary["grade"])
++        sections += metric_sections("Primer - head kematangan", primary["heads"]["ripeness"])
++        sections += metric_sections(
++            "Primer - head cacat (level 1 vs 3)", primary["heads"]["defect"]
++        )
++    if primary_defect is not None:
++        sections += _defect_primary_sections(primary_defect)
++    if primary_error is not None:
++        sections.append(
++            (
++                "Primer - evaluasi gagal",
++                f"Model sudah tersimpan, tetapi evaluasi foto primer gagal: {primary_error}",
++            )
++        )
++
++    for heading, body in sections:
++        logger.info("\n## %s\n%s", heading, body)
++    run.write_report(f"Laporan training {', '.join(selected)} ({report['model']})", sections)
++    run.write_metrics(
++        {
++            "report": report,
++            "validation": {
++                task: metadata[task].get("validation_metrics") for task in selected
++            },
++            "defect_primary": primary_defect,
++        }
++    )
++    if primary_defect is not None:
++        with (run.directory / "predictions_primer.csv").open(
++            "w", newline="", encoding="utf-8"
++        ) as file:
++            writer = csv.DictWriter(
++                file,
++                fieldnames=["file", "actual_defect_level", "p_reject", "predicted"],
++            )
++            writer.writeheader()
++            writer.writerows(primary_defect["rows"])
++    plot_curves(run.history_path, run.directory)
++    for task in selected:
++        plot_confusion(
++            metadata[task]["test_metrics"],
++            run.directory / f"confusion_test_{task}.png",
++            f"Test sekunder - {task}",
++        )
++
++
++def _run_training(
++    root: Path,
++    output_directory: Path,
++    selected: Sequence[str],
++    seed: int,
++    batch_size: int,
++    head_epochs: int,
++    fine_tune_epochs: int,
++    reuse_existing: bool,
++    architecture: str,
++    defect_data_dir: Path | None,
++    split_manifest: Path | None,
++    run: RunLog | None,
++    tensorboard: bool,
++) -> dict[str, Any]:
+     secondary = root / "Sekunder"
+     ripeness_root = secondary / "kematangan" / "Klasifikasi Kematangan Tomat"
+     ripeness_directories = {
+@@ -477,67 +837,183 @@ def train(
+         "setengah_matang": ripeness_root / "Tomat Setengah Matang",
+         "mentah": ripeness_root / "Tomat Mentah",
+     }
+-    defect_root = secondary / "cacat" / "Two Classes"
+-    defect_directories = {
+-        "healthy": defect_root / "Healthy",
+-        "reject": defect_root / "Reject",
+-    }
+-
+-    ripeness_samples = _collect_samples(ripeness_directories)
+-    defect_samples = _collect_samples(defect_directories)
+-    ripeness_model, ripeness_metadata = _train_task(
+-        "ripeness",
+-        ripeness_samples,
+-        RIPENESS_CLASSES,
+-        RIPENESS_LEVELS,
+-        artifact_paths(output_directory, "ripeness", architecture)[0],
+-        seed,
+-        batch_size,
+-        head_epochs,
+-        fine_tune_epochs,
+-        reuse_existing,
+-        architecture,
++    defect_root = (
++        defect_data_dir if defect_data_dir is not None else secondary / "cacat" / "Two Classes"
+     )
+-    defect_model, defect_metadata = _train_task(
+-        "defect",
+-        defect_samples,
+-        DEFECT_CLASSES,
+-        DEFECT_LEVELS,
+-        artifact_paths(output_directory, "defect", architecture)[0],
+-        seed,
+-        batch_size,
+-        head_epochs,
+-        fine_tune_epochs,
+-        reuse_existing,
+-        architecture,
++    defect_directories = (
++        {"healthy": defect_root / "healthy", "reject": defect_root / "reject"}
++        if defect_data_dir is not None
++        else {"healthy": defect_root / "Healthy", "reject": defect_root / "Reject"}
+     )
++    definitions = {
++        "ripeness": (RIPENESS_CLASSES, RIPENESS_LEVELS, ripeness_directories),
++        "defect": (DEFECT_CLASSES, DEFECT_LEVELS, defect_directories),
++    }
+ 
+-    for task, metadata in (("ripeness", ripeness_metadata), ("defect", defect_metadata)):
++    # Kumpulkan semua sampel dulu supaya folder yang salah ketahuan sebelum training mulai.
++    collected = {task: _collect_samples(definitions[task][2]) for task in selected}
++    models: dict[str, Any] = {}
++    metadata: dict[str, dict[str, Any]] = {}
++    for task in selected:
++        class_names, class_levels, _ = definitions[task]
++        models[task], metadata[task] = _train_task(
++            task,
++            collected[task],
++            class_names,
++            class_levels,
++            artifact_paths(output_directory, task, architecture)[0],
++            seed,
++            batch_size,
++            head_epochs,
++            fine_tune_epochs,
++            reuse_existing,
++            architecture,
++            split_manifest,
++            run,
++            tensorboard,
++        )
++
++    for task in selected:
+         artifact_paths(output_directory, task, architecture)[1].write_text(
+-            json.dumps(metadata, indent=2, ensure_ascii=False),
++            json.dumps(metadata[task], indent=2, ensure_ascii=False),
+             encoding="utf-8",
+         )
+-    report = {
++    report: dict[str, Any] = {
+         "model": display_name(architecture),
+         "architecture": architecture,
+         "input_size": list(INPUT_SIZE),
+         "seed": seed,
+-        "secondary": {
+-            "ripeness": ripeness_metadata["test_metrics"],
+-            "defect": defect_metadata["test_metrics"],
+-        },
+-        "primary_independent_test": _evaluate_primary(
+-            root, ripeness_model, defect_model, output_directory, architecture
+-        ),
+-        "efficiency": measure_efficiency(ripeness_model, defect_model, architecture),
++        "tasks": list(selected),
++        "secondary": {task: metadata[task]["test_metrics"] for task in selected},
+     }
+-    report_path(output_directory, architecture).write_text(
+-        json.dumps(report, indent=2, ensure_ascii=False),
+-        encoding="utf-8",
+-    )
++    primary_defect: dict[str, Any] | None = None
++    primary_error: str | None = None
++    if set(selected) == set(TASKS):
++        report["primary_independent_test"] = _evaluate_primary(
++            root, models["ripeness"], models["defect"], output_directory, architecture
++        )
++        report["efficiency"] = measure_efficiency(
++            models["ripeness"], models["defect"], architecture
++        )
++        report_path(output_directory, architecture).write_text(
++            json.dumps(report, indent=2, ensure_ascii=False),
++            encoding="utf-8",
++        )
++    elif "defect" in selected:
++        # Model sudah tersimpan; kegagalan evaluasi primer tidak boleh menghapus hasil training.
++        try:
++            primary_defect = _evaluate_defect_primary(
++                root, models["defect"], DEFECT_CLASSES, architecture
++            )
++            report["defect_primary_independent_test"] = {
++                key: value for key, value in primary_defect.items() if key != "rows"
++            }
++        except Exception as exc:  # noqa: BLE001 - lihat komentar di atas
++            primary_error = f"{type(exc).__name__}: {exc}"
++            logger.exception("Evaluasi foto primer model cacat gagal.")
++    if run is not None:
++        _write_run_outputs(run, selected, metadata, report, primary_defect, primary_error)
+     return report
+ 
+ 
++def train(
++    data_root: str | Path,
++    models_dir: str | Path = "models",
++    seed: int = 42,
++    batch_size: int = 16,
++    head_epochs: int = 8,
++    fine_tune_epochs: int = 5,
++    reuse_existing: bool = False,
++    architecture: str = DEFAULT_ARCHITECTURE,
++    tasks: Sequence[str] = TASKS,
++    defect_data_dir: str | Path | None = None,
++    split_manifest: str | Path | None = None,
++    logs_dir: str | Path | None = None,
++    run_name: str = "train",
++    tensorboard: bool = False,
++    overwrite_models: bool = False,
++) -> dict[str, Any]:
++    """Train the requested heads and evaluate on secondary holdouts and primary photos."""
++    validate_architecture(architecture)
++    if batch_size < 1:
++        raise ValueError("batch_size must be greater than zero.")
++    if head_epochs < 1:
++        raise ValueError("head_epochs must be greater than zero.")
++    if fine_tune_epochs < 0:
++        raise ValueError("fine_tune_epochs cannot be negative.")
++    selected = list(dict.fromkeys(tasks))
++    if not selected or any(task not in TASKS for task in selected):
++        raise ValueError(f"tasks must be a non-empty subset of {TASKS}; got {list(tasks)}.")
++    if split_manifest is not None and len(selected) != 1:
++        raise ValueError("split_manifest can only be used when training a single task.")
++    root = Path(data_root)
++    output_directory = Path(models_dir)
++    if set(selected) != set(TASKS) and not reuse_existing and not overwrite_models:
++        existing = [
++            str(artifact_paths(output_directory, task, architecture)[0])
++            for task in selected
++            if artifact_paths(output_directory, task, architecture)[0].is_file()
++        ]
++        if existing:
++            raise FileExistsError(
++                f"Model sudah ada: {existing}. Pakai --models-dir lain agar model lama aman, "
++                "atau tambahkan --overwrite-models untuk menimpanya."
++            )
++
++    run: RunLog | None = None
++    if logs_dir is not None:
++        try:
++            device = describe_device()
++        except Exception:  # noqa: BLE001 - metadata perangkat bersifat best-effort
++            device = "unknown"
++        run = start_run(
++            Path(logs_dir),
++            run_name,
++            architecture,
++            {
++                "tasks": selected,
++                "architecture": architecture,
++                "seed": seed,
++                "batch_size": batch_size,
++                "head_epochs": head_epochs,
++                "fine_tune_epochs": fine_tune_epochs,
++                "head_learning_rate": HEAD_LEARNING_RATE,
++                "fine_tune_learning_rate": FINE_TUNE_LEARNING_RATE,
++                "fine_tune_layers": FINE_TUNE_LAYERS,
++                "early_stopping_patience": EARLY_STOPPING_PATIENCE,
++                "input_size": list(INPUT_SIZE),
++                "data_root": str(root),
++                "models_dir": str(output_directory),
++                "defect_data_dir": str(defect_data_dir) if defect_data_dir else None,
++                "split_manifest": str(split_manifest) if split_manifest else None,
++                "reuse_existing": reuse_existing,
++                "device": device,
++            },
++        )
++    try:
++        return _run_training(
++            root,
++            output_directory,
++            selected,
++            seed,
++            batch_size,
++            head_epochs,
++            fine_tune_epochs,
++            reuse_existing,
++            architecture,
++            Path(defect_data_dir) if defect_data_dir else None,
++            Path(split_manifest) if split_manifest else None,
++            run,
++            tensorboard,
++        )
++    except BaseException:
++        logger.exception("Training berhenti karena error.")
++        raise
++    finally:
++        if run is not None:
++            run.close()
++
++
+ def measure_efficiency(
+     ripeness_model: Any, defect_model: Any, architecture: str
+ ) -> dict[str, Any]:
+@@ -573,6 +1049,40 @@ def main() -> None:
+         action="store_true",
+         help="Reuse existing .keras checkpoints instead of training those tasks again.",
+     )
++    parser.add_argument(
++        "--tasks",
++        nargs="+",
++        choices=list(TASKS),
++        default=list(TASKS),
++        help="Head yang dilatih (bawaan: keduanya). Contoh: --tasks defect.",
++    )
++    parser.add_argument(
++        "--defect-data-dir",
++        type=Path,
++        default=None,
++        help="Folder dataset cacat versi baru yang berisi subfolder healthy/ dan reject/.",
++    )
++    parser.add_argument(
++        "--split-manifest",
++        type=Path,
++        default=None,
++        help="CSV (file,split,group) untuk split per grup; hanya untuk satu task per run.",
++    )
++    parser.add_argument(
++        "--logs-dir",
++        type=Path,
++        default=Path("logs"),
++        help="Folder induk log run (train.log, history.csv, report.md, grafik).",
++    )
++    parser.add_argument("--run-name", default="train", help="Awalan nama folder run.")
++    parser.add_argument(
++        "--tensorboard", action="store_true", help="Tulis juga log TensorBoard ke folder run."
++    )
++    parser.add_argument(
++        "--overwrite-models",
++        action="store_true",
++        help="Izinkan menimpa model yang sudah ada saat melatih sebagian task.",
++    )
+     args = parser.parse_args()
+     results: dict[str, Any] = {}
+     for architecture in args.architecture:
+@@ -585,9 +1095,17 @@ def main() -> None:
+             args.fine_tune_epochs,
+             args.reuse_existing_models,
+             architecture,
++            tasks=args.tasks,
++            defect_data_dir=args.defect_data_dir,
++            split_manifest=args.split_manifest,
++            logs_dir=args.logs_dir,
++            run_name=args.run_name,
++            tensorboard=args.tensorboard,
++            overwrite_models=args.overwrite_models,
+         )
+         _release_session()
+     print(json.dumps(results, indent=2, ensure_ascii=False))
++    print(f"\nLog, tabel metrik (report.md), dan grafik ada di: {args.logs_dir}")
+ 
+ 
+ def _release_session() -> None:
+diff --git a/tests/test_ml_run_logging.py b/tests/test_ml_run_logging.py
+new file mode 100644
+index 0000000..99be675
+--- /dev/null
++++ b/tests/test_ml_run_logging.py
+@@ -0,0 +1,285 @@
++import csv
++import json
++import logging
++from pathlib import Path
++
++import pytest
++
++from ml.metrics import binary_ranking_metrics, classification_metrics
++from ml.resnext import artifact_paths
++from ml.run_logging import (
++    HISTORY_COLUMNS,
++    EpochRecorder,
++    class_metrics_table,
++    confusion_table,
++    history_table,
++    read_history,
++    render_table,
++    start_run,
++)
++from ml.train import (
++    Sample,
++    _defect_primary_sections,
++    _split_samples_from_manifest,
++    train,
++)
++
++
++def test_render_table_is_markdown_with_numeric_columns_right_aligned():
++    table = render_table(["kelas", "recall"], [["healthy", 0.5], ["reject", 1.0]])
++    lines = table.splitlines()
++
++    assert lines[0].startswith("| kelas")
++    assert lines[1].replace("-", "").replace("|", "").replace(":", "").strip() == ""
++    assert lines[1].split("|")[2].endswith(":")  # kolom angka rata kanan
++    assert "0.5000" in lines[2] and "1.0000" in lines[3]
++    assert len({len(line) for line in lines}) == 1  # semua baris sama lebar
++
++
++def test_render_table_handles_none_and_escapes_pipes():
++    table = render_table(["a", "b"], [["x|y", None]])
++
++    row = table.splitlines()[2]
++    assert "x\\|y" in row
++    assert row.split("|")[-2].strip() == "-"
++
++
++def test_render_table_rejects_ragged_rows():
++    with pytest.raises(ValueError):
++        render_table(["a", "b"], [["only-one"]])
++
++
++def test_metric_tables_come_from_classification_metrics():
++    metrics = classification_metrics([0, 0, 1, 1, 1], [0, 1, 1, 1, 0], ["healthy", "reject"])
++
++    per_class = class_metrics_table(metrics)
++    confusion = confusion_table(metrics)
++
++    assert "healthy" in per_class and "macro avg" in per_class and "accuracy" in per_class
++    assert "support" in per_class
++    assert "sebenarnya" in confusion and "recall" in confusion
++    assert "| healthy" in confusion
++
++
++def test_epoch_recorder_writes_header_once_and_appends_rows(tmp_path: Path):
++    path = tmp_path / "history.csv"
++    head = EpochRecorder(path, "defect", "head")
++    head.record(1, {"loss": 0.9, "accuracy": 0.5, "val_loss": 0.8, "val_accuracy": 0.6}, 1e-3, 12.5)
++    head.record(2, {"loss": 0.7, "accuracy": 0.7, "val_loss": 0.75, "val_accuracy": 0.65}, 1e-3, 11.0)
++    fine = EpochRecorder(path, "defect", "fine_tune", epoch_offset=2)
++    fine.record(1, {"loss": 0.6, "accuracy": 0.8}, 1e-5, None)
++
++    with path.open(newline="", encoding="utf-8") as file:
++        rows = list(csv.reader(file))
++    assert rows[0] == list(HISTORY_COLUMNS)
++    assert len(rows) == 4
++    history = read_history(path)
++    assert [row["epoch"] for row in history] == [1, 2, 3]
++    assert history[2]["phase"] == "fine_tune" and history[2]["val_loss"] is None
++    assert history[0]["val_accuracy"] == pytest.approx(0.6)
++    assert "fine_tune" in history_table(history)
++
++
++def test_epoch_recorder_logs_a_readable_line(tmp_path: Path, caplog: pytest.LogCaptureFixture):
++    with caplog.at_level(logging.INFO, logger="ml.run_logging"):
++        EpochRecorder(tmp_path / "h.csv", "defect", "head").record(
++            1, {"loss": 0.5, "accuracy": 0.8, "val_loss": 0.4, "val_accuracy": 0.85}, 1e-3, 3.0
++        )
++
++    assert "[defect/head] epoch 1" in caplog.text
++    assert "val_acc 0.8500" in caplog.text
++
++
++def test_start_run_writes_log_and_config_then_detaches(tmp_path: Path):
++    root = logging.getLogger()
++    handlers_before = list(root.handlers)
++
++    run = start_run(tmp_path, "uji", "resnext101", {"seed": 7}, console=False)
++    logging.getLogger("ml.train").info("halo dari training")
++    run.close()
++
++    assert run.directory.parent == tmp_path
++    assert run.directory.name.startswith("uji_resnext101_")
++    assert "halo dari training" in run.log_path.read_text(encoding="utf-8")
++    config = json.loads((run.directory / "config.json").read_text(encoding="utf-8"))
++    assert config["seed"] == 7
++    assert "python" in config["environment"] and "git" in config["environment"]
++    assert root.handlers == handlers_before
++
++
++def test_start_run_never_reuses_an_existing_folder(tmp_path: Path, monkeypatch):
++    class FixedClock:
++        @staticmethod
++        def now():
++            from datetime import datetime
++
++            return datetime(2026, 11, 24, 15, 30, 0)
++
++    monkeypatch.setattr("ml.run_logging.datetime", FixedClock)
++    first = start_run(tmp_path, "r", "resnext101", {}, console=False)
++    second = start_run(tmp_path, "r", "resnext101", {}, console=False)
++    first.close()
++    second.close()
++
++    assert first.directory != second.directory
++
++
++def _samples():
++    return [
++        Sample(Path(f"/x/{label}/{label}_{index}.jpg"), label, f"{label}{index}")
++        for label in ("healthy", "reject")
++        for index in range(6)
++    ]
++
++
++def _write_manifest(path: Path, rows: list[tuple[str, str, str]]) -> Path:
++    with path.open("w", newline="", encoding="utf-8") as file:
++        writer = csv.writer(file)
++        writer.writerow(["file", "split", "group"])
++        writer.writerows(rows)
++    return path
++
++
++def _manifest_rows(samples, group_of=lambda sample, index: f"g{index}"):
++    splits = ["train", "train", "train", "train", "validation", "test"]
++    rows = []
++    for label in ("healthy", "reject"):
++        for index, split in enumerate(splits):
++            rows.append((f"{label}/{label}_{index}.jpg", split, f"{label}-{index}"))
++    return rows
++
++
++def test_manifest_split_assigns_by_file_and_keeps_groups_together(tmp_path: Path):
++    manifest = _write_manifest(tmp_path / "m.csv", _manifest_rows(_samples()))
++
++    train_part, validation_part, test_part = _split_samples_from_manifest(_samples(), manifest)
++
++    assert (len(train_part), len(validation_part), len(test_part)) == (8, 2, 2)
++    assert {sample.label for sample in test_part} == {"healthy", "reject"}
++
++
++def test_manifest_split_rejects_groups_spanning_splits(tmp_path: Path):
++    rows = _manifest_rows(_samples())
++    rows[0] = (rows[0][0], "train", "shared")
++    rows[5] = (rows[5][0], "test", "shared")
++    manifest = _write_manifest(tmp_path / "m.csv", rows)
++
++    with pytest.raises(ValueError, match="leakage"):
++        _split_samples_from_manifest(_samples(), manifest)
++
++
++def test_manifest_split_rejects_images_missing_from_manifest(tmp_path: Path):
++    manifest = _write_manifest(tmp_path / "m.csv", _manifest_rows(_samples())[:-1])
++
++    with pytest.raises(ValueError, match="not listed"):
++        _split_samples_from_manifest(_samples(), manifest)
++
++
++def test_manifest_split_rejects_unknown_split_and_missing_columns(tmp_path: Path):
++    bad_split = _write_manifest(tmp_path / "a.csv", [("healthy/healthy_0.jpg", "val", "g")])
++    with pytest.raises(ValueError, match="Unknown split"):
++        _split_samples_from_manifest(_samples(), bad_split)
++
++    no_group = tmp_path / "b.csv"
++    no_group.write_text("file,split\nhealthy/healthy_0.jpg,train\n", encoding="utf-8")
++    with pytest.raises(ValueError, match="lacks column"):
++        _split_samples_from_manifest(_samples(), no_group)
++
++
++def test_manifest_split_requires_both_classes_in_every_split(tmp_path: Path):
++    rows = [(r[0], r[1], r[2]) for r in _manifest_rows(_samples())]
++    rows = [(f, "train" if f.startswith("reject") and s == "test" else s, g) for f, s, g in rows]
++    manifest = _write_manifest(tmp_path / "m.csv", rows)
++
++    with pytest.raises(ValueError, match="both classes"):
++        _split_samples_from_manifest(_samples(), manifest)
++
++
++def test_binary_ranking_metrics_separable_scores():
++    result = binary_ranking_metrics(
++        [0, 0, 0, 0, 1, 1, 1], [0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 0.9], max_fpr=0.10
++    )
++
++    assert result["auc"] == pytest.approx(1.0)
++    assert result["constrained"]["recall"] == pytest.approx(1.0)
++    assert result["constrained"]["false_positive_rate"] == 0.0
++    assert result["fixed_threshold"]["recall"] == pytest.approx(1.0)
++
++
++def test_binary_ranking_metrics_respects_the_false_positive_budget():
++    expected = [0] * 10 + [1] * 4
++    scores = [0.9, 0.85, 0.1, 0.1, 0.2, 0.3, 0.1, 0.2, 0.1, 0.3, 0.95, 0.8, 0.5, 0.4]
++
++    result = binary_ranking_metrics(expected, scores, max_fpr=0.10)
++
++    # Dua negatif berskor tinggi: ambang harus di atas 0,85 agar FPR <= 10%.
++    assert result["constrained"]["false_positive_rate"] <= 0.10
++    assert result["constrained"]["recall"] == pytest.approx(0.25)
++    assert result["constrained"]["threshold"] > 0.85
++
++
++def test_binary_ranking_metrics_without_both_classes_has_no_auc():
++    result = binary_ranking_metrics([0, 0, 0], [0.1, 0.2, 0.3])
++
++    assert result["auc"] is None and result["constrained"] is None
++    assert result["fixed_threshold"]["recall"] is None
++
++
++def test_train_refuses_to_overwrite_existing_model_when_training_one_task(tmp_path: Path):
++    models_dir = tmp_path / "models"
++    models_dir.mkdir()
++    artifact_paths(models_dir, "defect", "resnext101")[0].write_bytes(b"old-model")
++
++    with pytest.raises(FileExistsError, match="--overwrite-models"):
++        train(tmp_path, models_dir, tasks=["defect"])
++    assert artifact_paths(models_dir, "defect", "resnext101")[0].read_bytes() == b"old-model"
++
++
++def test_train_validates_tasks_and_manifest_usage(tmp_path: Path):
++    with pytest.raises(ValueError, match="tasks"):
++        train(tmp_path, tmp_path, tasks=["grade"])
++    with pytest.raises(ValueError, match="single task"):
++        train(tmp_path, tmp_path, tasks=["ripeness", "defect"], split_manifest=tmp_path / "m.csv")
++
++
++def _primary(recall: float, positives: int = 9):
++    return {
++        "per_level": {
++            1: {"images": 73, "predicted_reject": 10, "predicted_reject_rate": 0.137,
++                "mean_p_reject": 0.2, "median_p_reject": 0.1},
++            2: {"images": 26, "predicted_reject": 9, "predicted_reject_rate": 0.346,
++                "mean_p_reject": 0.4, "median_p_reject": 0.3},
++            3: {"images": 9, "predicted_reject": 7, "predicted_reject_rate": 0.778,
++                "mean_p_reject": 0.8, "median_p_reject": 0.9},
++        },
++        "level1_vs_level3": {
++            "positives": positives, "negatives": 73, "max_fpr": 0.10, "auc": 0.9,
++            "fixed_threshold": {"recall": 0.78, "false_positive_rate": 0.14},
++            "constrained": {"recall": recall, "threshold": 0.83},
++        },
++        "level1_vs_level2_or_3": {"auc": 0.8},
++        "gate": {
++            "min_recall": 0.70,
++            "max_fpr": 0.10,
++            "min_positives": 5,
++            "enough_positives": positives >= 5,
++            "passed": positives >= 5 and recall >= 0.70,
++        },
++    }
++
++
++def test_defect_primary_sections_report_gate_verdict():
++    passed = dict(_defect_primary_sections(_primary(0.78)))
++    failed = dict(_defect_primary_sections(_primary(0.33)))
++
++    assert "**LULUS**" in passed["Primer - gate go/no-go"]
++    assert "**BELUM LULUS**" in failed["Primer - gate go/no-go"]
++    assert "level 3" in passed["Primer - model cacat per level cacat sebenarnya"]
++    assert "AUC level 1 vs 3" in passed["Primer - ringkasan model cacat"]
++
++
++def test_defect_primary_gate_is_not_decided_with_too_few_positives():
++    sections = dict(_defect_primary_sections(_primary(1.0, positives=2)))
++
++    assert "TIDAK DAPAT DINILAI" in sections["Primer - gate go/no-go"]
++    assert "**LULUS**" not in sections["Primer - gate go/no-go"]

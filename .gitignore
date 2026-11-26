@@ -25,6 +25,11 @@ models/*
 !models/.gitkeep
 !models/README.md
 
+models_smoke/
+
+# Log run training (train.log, history.csv, report.md, grafik)
+logs/
+
 # OS
 .DS_Store
 Thumbs.db

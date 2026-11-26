@@ -16,6 +16,8 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     precision_recall_fscore_support,
+    roc_auc_score,
+    roc_curve,
 )
 
 GRADE_CLASSES = ("A", "B", "C")
@@ -55,6 +57,54 @@ def classification_metrics(
             zero_division=0,
         ),
     }
+
+
+def binary_ranking_metrics(
+    expected: Sequence[int],
+    scores: Sequence[float],
+    max_fpr: float = 0.10,
+    threshold: float = 0.5,
+) -> dict[str, Any]:
+    """AUC dan dua titik operasi untuk positif (1) vs negatif (0).
+
+    - fixed_threshold: recall dan false positive rate pada ambang tetap (bawaan 0,5).
+    - constrained: recall tertinggi dengan false positive rate <= max_fpr. Ambangnya dipilih
+      dari data yang sama, jadi angkanya optimistis; pakai sebagai indikasi, bukan hasil final.
+    """
+    truth = np.asarray(expected, dtype=int)
+    score = np.asarray(scores, dtype=float)
+    if truth.shape != score.shape:
+        raise ValueError("expected and scores must have the same length.")
+    positives = int(truth.sum())
+    negatives = int(truth.size - positives)
+
+    def operating_point(cut: float) -> dict[str, Any]:
+        predicted = score >= cut
+        true_positive = int(np.sum(predicted & (truth == 1)))
+        false_positive = int(np.sum(predicted & (truth == 0)))
+        return {
+            "threshold": None if not np.isfinite(cut) else float(cut),
+            "true_positive": true_positive,
+            "false_positive": false_positive,
+            "recall": (true_positive / positives) if positives else None,
+            "false_positive_rate": (false_positive / negatives) if negatives else None,
+        }
+
+    result: dict[str, Any] = {
+        "positives": positives,
+        "negatives": negatives,
+        "max_fpr": max_fpr,
+        "auc": None,
+        "fixed_threshold": operating_point(threshold),
+        "constrained": None,
+    }
+    if positives and negatives:
+        result["auc"] = float(roc_auc_score(truth, score))
+        fpr, tpr, thresholds = roc_curve(truth, score)
+        allowed = np.flatnonzero(fpr <= max_fpr)
+        best = allowed[int(np.argmax(tpr[allowed]))]
+        result["constrained"] = operating_point(float(thresholds[best]))
+    return result
 
 
 def grade_metrics(expected: Sequence[str], predicted: Sequence[str]) -> dict[str, Any]:

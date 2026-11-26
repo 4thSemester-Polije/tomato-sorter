@@ -1,0 +1,1524 @@
+diff --git a/docs/DATASET_CACAT_V2.md b/docs/DATASET_CACAT_V2.md
+new file mode 100644
+index 0000000..13630c2
+--- /dev/null
++++ b/docs/DATASET_CACAT_V2.md
+@@ -0,0 +1,118 @@
++# Dataset cacat v2 (AgML): persiapan, QA, dan training
++
++Skrip `ml/prepare_defect_v2.py` mengubah dataset AgML (`Fresh/` dan `Rotten/`) menjadi dataset
++klasifikasi 2 kelas yang siap dipakai `ml.train`: crop persegi per tomat, latar netral, dan
++`split_manifest.csv` yang membagi data per kelompok agar tidak bocor.
++
++Butuh patch 0005 (logging dan `--split-manifest`) sudah diterapkan.
++
++## 1. Alur
++
++```
++AgML (Fresh, Rotten) --prepare_defect_v2--> defect_v2/{healthy,reject}, split_manifest.csv, qa/
++        --QA visual (wajib)--> hapus crop yang salah label
++        --ml.train --tasks defect ...--> model + logs/<run>/report.md (gate di foto primer)
++```
++
++## 2. Menjalankan persiapan (di PC, bukan Colab)
++
++Dataset AgML ada di PC Anda, dan hasil crop kecil (ratusan KB per ribuan gambar), jadi jalankan di
++terminal VS Code lalu unggah folder hasilnya ke Drive untuk training di Colab.
++
++```powershell
++.\.venv\Scripts\Activate.ps1
++# uji cepat (40 gambar pertama per kelas) untuk melihat laporannya dulu
++python -m ml.prepare_defect_v2 `
++  --agml-dir "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\agml" `
++  --output-dir "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\defect_v2_uji" --limit 40
++
++# penuh
++python -m ml.prepare_defect_v2 `
++  --agml-dir "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\agml" `
++  --output-dir "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\defect_v2"
++```
++
++| Opsi | Bawaan | Fungsi |
++|---|---|---|
++| `--background neutral\|keep` | `neutral` | `neutral`: latar diganti warna netral (meja, kertas, sabuk tidak bisa jadi petunjuk). `keep`: latar asli |
++| `--multi-rotten exclude\|include` | `exclude` | Foto Rotten dengan beberapa tomat dikecualikan (label per buah tidak pasti) atau tetap dipakai |
++| `--group-block N` | 20 | Foto bernomor berdekatan dianggap satu sesi pemotretan (satu kelompok); 0 = nonaktif |
++| `--dup-threshold` | 0.985 | Korelasi minimum dua crop dianggap salinan; 0 = nonaktif. Jangan turun di bawah ~0.95 |
++| `--size` | 256 | Sisi crop persegi |
++| `--limit N` | - | Hanya N gambar pertama per kelas (uji cepat) |
++| `--overwrite` | - | Timpa hasil sebelumnya (tanpa ini, ditolak) |
++
++## 3. Apa yang disaring, dan kenapa
++
++- **Tomat bersentuhan atau menyatu ditolak** (uji bentuk `solidity` < 0.92). Pemisahan otomatis
++  (watershed) saya coba dan terbukti merusak bentuk tomat, jadi tidak dipakai.
++- **Foto Rotten bermultitomat dikecualikan** secara bawaan. Foto Rotten sering berisi 2-3 tomat dan
++  tidak semuanya busuk. Tanpa ini model bisa belajar "banyak tomat = reject".
++- **Crop persegi** (bentuk tomat tidak terdistorsi), bukan kotak mentah yang diregangkan.
++- **Kelompok split**: crop dari foto yang sama, foto bernomor berdekatan, dan crop hampir identik
++  selalu masuk split yang sama. Gambar nyaris identik yang muncul di Fresh dan Rotten dibuang
++  (`label_konflik`).
++
++## 4. QA wajib sebelum training
++
++1. Buka `prepare_report.md`:
++   - **Gambar yang dikecualikan**: bila `multi_tomat_rotten` sangat besar (mis. lebih dari separuh
++     Rotten), positif terlalu sedikit; pertimbangkan `--multi-rotten include` lalu tinjau `qa/`.
++   - **Kelompok terbesar** lebih dari ~10% total crop berarti kelompok berantai; naikkan
++     `--dup-threshold`.
++   - **Split**: tiap kelas harus punya crop di train, validation, dan test.
++2. Buka `qa/crops_healthy.jpg` dan `qa/crops_reject.jpg` (48 crop acak per kelas). Periksa:
++   crop utuh, latar netral bersih, dan label masuk akal (mis. tomat sehat di folder `reject`).
++3. Buka `qa/excluded_<alasan>.jpg` untuk memastikan yang dibuang memang layak dibuang. Tomat pucat
++   atau latar yang tidak polos bisa gagal segmentasi.
++4. Hapus file crop yang salah label dari `healthy/` atau `reject/`. Manifest tetap valid (entri
++   tanpa file diabaikan saat training).
++
++## 5. Training
++
++```powershell
++python -m ml.train --data-root "D:\D4 Polije\Semester 5\Project\Data\Datasets" `
++  --tasks defect `
++  --defect-data-dir "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\defect_v2" `
++  --split-manifest  "D:\D4 Polije\Semester 5\Project\Data\Datasets\Sekunder\defect_v2\split_manifest.csv" `
++  --models-dir models_cacat_v2 --run-name defect_v2
++```
++
++Colab: lihat `docs/TRAINING_CACAT.md` (bagian 4) dan ganti dua path `--defect-data-dir` dan
++`--split-manifest` ke folder `defect_v2` di Drive. Bila OpenCV belum ada di lingkungan training:
++`pip install opencv-python-headless`.
++
++**`--primary-crop`** (bawaan `auto`) menentukan masukan evaluasi foto primer. `auto` membaca
++`prepare_report.json` dan memakai crop yang sama dengan cara dataset dibuat. Tanpa ini model yang
++dilatih pada crop akan diuji dengan foto penuh dan gate-nya menyesatkan; bila Anda memaksa nilai
++berbeda, training memberi peringatan. Foto primer yang tidak bisa di-crop (tidak ada tomat utuh)
++tidak dihitung dan dilaporkan di kolom "tanpa crop".
++
++### Bandingkan latar netral dan latar asli
++
++Latar netral adalah hipotesis, bukan fakta. Buat dua dataset dan latih keduanya:
++
++```powershell
++python -m ml.prepare_defect_v2 --agml-dir ... --output-dir ...\defect_v2_keep --background keep
++```
++
++Latih dengan `--run-name defect_v2_keep` dan `--models-dir models_cacat_v2_keep`, lalu bandingkan
++`report.md` kedua run di bagian "Primer". Pilih berdasarkan gate di foto primer, bukan akurasi
++test sekunder.
++
++## 6. Batasan yang perlu diketahui
++
++- **Ambang belum dikalibrasi.** Segmentasi dan uji bentuk dicoba pada 18 foto (AgML dan primer),
++  bukan seluruh dataset. `prepare_report.md` dan `qa/` adalah pemeriksaan sebenarnya.
++- **Tomat yang sama difoto berkali-kali tidak terdeteksi.** Detektor kemiripan hanya menangkap
++  salinan hampir identik. Di AgML, tomat yang sama tampak muncul di foto berbeda (mis. Rotten 0300
++  dan 0600), sehingga akurasi validasi dan test sekunder cenderung optimistis. Foto primer adalah
++  ukuran yang sebenarnya.
++- **Cakupan cacat terbatas.** Rotten berisi busuk, keriput, dan bercak gelap. Retak dan lubang
++  (mayoritas level 3 di foto primer Anda) kemungkinan besar tidak tercakup.
++- **Model v2 menuntut crop yang sama saat dipakai.** API dan controller belum meng-crop tomat
++  (patch berikutnya). Jangan pasang model v2 ke API sebelum itu, dan biarkan patch 0004 (grade dari
++  kematangan saja) tetap aktif.
++- **Di alat, crop memakai uji bentuk yang lebih longgar** (`min_solidity=0`), karena hanya ada satu
++  tomat. Pada foto primer, tomat dengan kelopak besar (T003) tertolak oleh uji ketat tetapi
++  lolos dengan yang longgar.
+diff --git a/ml/prepare_defect_v2.py b/ml/prepare_defect_v2.py
+new file mode 100644
+index 0000000..dbb23a8
+--- /dev/null
++++ b/ml/prepare_defect_v2.py
+@@ -0,0 +1,504 @@
++"""Siapkan dataset cacat v2 dari AgML (Fresh/Rotten): crop per tomat, kelompok split, manifest.
++
++Keluaran di --output-dir:
++    healthy/            crop tomat sehat (dari Fresh)
++    reject/             crop tomat cacat jelas (dari Rotten)
++    split_manifest.csv  file,split,group  (dipakai ml.train --split-manifest)
++    crops_index.csv     metadata tiap crop (sumber, kotak, solidity, ...)
++    prepare_report.md/.json  ringkasan, alasan pengecualian, statistik kelompok
++    qa/                 contact sheet untuk pemeriksaan visual
++
++Perlindungan terhadap kebocoran dan jalan pintas:
++- Crop persegi dengan latar netral (opsional) agar meja/kertas/sabuk tidak jadi petunjuk.
++- Gambar dengan tomat bersentuhan/menyatu ditolak; foto Rotten bermultitomat dikecualikan karena
++  label gambarnya belum tentu berlaku untuk setiap buah.
++- Satu kelompok = crop dari foto yang sama, foto bernomor berdekatan (satu sesi pemotretan), dan
++  crop yang hampir identik. Semua anggota kelompok masuk split yang sama.
++"""
++
++from __future__ import annotations
++
++import argparse
++import csv
++import json
++import logging
++import random
++import re
++import shutil
++from collections import Counter, defaultdict
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any, Sequence
++
++import cv2
++import numpy as np
++from PIL import Image, ImageOps
++
++from ml.run_logging import render_table
++from vision.crop import (
++    MAX_SIDE,
++    MIN_SOLIDITY,
++    crop_region,
++    find_tomato_regions,
++    is_clean_single_tomato,
++    pil_to_bgr,
++)
++
++logger = logging.getLogger(__name__)
++
++SOURCE_FOLDERS = {"fresh": "healthy", "rotten": "reject"}
++IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
++THUMBNAIL_SIZE = 24
++MANAGED_ENTRIES = (
++    "healthy",
++    "reject",
++    "qa",
++    "split_manifest.csv",
++    "crops_index.csv",
++    "prepare_report.md",
++    "prepare_report.json",
++)
++REASONS = {
++    "tidak_ada_tomat": "tidak ada objek tomat terdeteksi",
++    "tomat_menyatu_atau_terpotong": "tomat menyentuh tepi gambar atau bentuknya tidak cembung",
++    "multi_tomat_rotten": "foto Rotten dengan beberapa tomat (label per buah tidak pasti)",
++    "gagal_dibaca": "file gambar tidak bisa dibaca",
++    "label_konflik": "gambar nyaris identik muncul di Fresh dan Rotten",
++}
++
++
++@dataclass
++class CropRecord:
++    file: str  # "<label>/<nama file>"
++    label: str
++    source: str
++    index: int | None
++    box: tuple[int, int, int, int]
++    area_fraction: float
++    solidity: float
++    regions_in_source: int
++    thumbnail: np.ndarray
++
++
++# --------------------------------------------------------------------------- input
++
++
++def load_bgr(path: Path, max_side: int = MAX_SIDE) -> np.ndarray:
++    with Image.open(path) as source:
++        return pil_to_bgr(ImageOps.exif_transpose(source), max_side)
++
++
++def list_sources(agml_dir: Path, limit: int | None = None) -> list[tuple[Path, str]]:
++    folders = {p.name.lower(): p for p in Path(agml_dir).iterdir() if p.is_dir()} if Path(agml_dir).is_dir() else {}
++    missing = [name for name in SOURCE_FOLDERS if name not in folders]
++    if missing:
++        raise FileNotFoundError(
++            f"Folder {missing} tidak ditemukan di {agml_dir} (diharapkan Fresh dan Rotten)."
++        )
++    sources: list[tuple[Path, str]] = []
++    for name, label in SOURCE_FOLDERS.items():
++        files = sorted(
++            p for p in folders[name].iterdir() if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
++        )
++        sources += [(path, label) for path in (files[:limit] if limit else files)]
++    if not sources:
++        raise ValueError(f"Tidak ada gambar JPG/PNG di {agml_dir}.")
++    return sources
++
++
++def source_index(stem: str) -> int | None:
++    match = re.search(r"(\d+)$", stem)
++    return int(match.group(1)) if match else None
++
++
++def _thumbnail(crop_bgr: np.ndarray) -> np.ndarray:
++    gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
++    vector = cv2.resize(gray, (THUMBNAIL_SIZE, THUMBNAIL_SIZE), interpolation=cv2.INTER_AREA)
++    vector = vector.astype(np.float32).ravel()
++    vector -= vector.mean()
++    norm = float(np.linalg.norm(vector))
++    return vector / norm if norm > 0 else vector
++
++
++def _write_jpeg(path: Path, image_bgr: np.ndarray) -> None:
++    ok, encoded = cv2.imencode(".jpg", image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
++    if not ok:
++        raise RuntimeError(f"Gagal meng-encode {path}")
++    path.write_bytes(encoded.tobytes())
++
++
++# --------------------------------------------------------------------------- crop
++
++
++def process_sources(
++    sources: Sequence[tuple[Path, str]],
++    output_dir: Path,
++    size: int = 256,
++    neutral_background: bool = True,
++    multi_rotten: str = "exclude",
++    min_solidity: float = MIN_SOLIDITY,
++) -> tuple[list[CropRecord], dict[str, list[tuple[Path, str]]], Counter]:
++    records: list[CropRecord] = []
++    excluded: dict[str, list[tuple[Path, str]]] = defaultdict(list)
++    source_counts: Counter = Counter()
++    for label in set(label for _, label in sources):
++        (output_dir / label).mkdir(parents=True, exist_ok=True)
++
++    for number, (path, label) in enumerate(sources, start=1):
++        source_counts[label] += 1
++        if number % 100 == 0:
++            logger.info("Diproses %d/%d gambar sumber ...", number, len(sources))
++        try:
++            image = load_bgr(path)
++        except Exception:  # noqa: BLE001 - satu file rusak tidak boleh menghentikan seluruh proses
++            logger.exception("Tidak bisa membaca %s", path)
++            excluded["gagal_dibaca"].append((path, label))
++            continue
++        regions = find_tomato_regions(image)
++        if not regions:
++            excluded["tidak_ada_tomat"].append((path, label))
++            continue
++        clean = [region for region in regions if is_clean_single_tomato(region, min_solidity)]
++        if label == "reject" and multi_rotten == "exclude":
++            suspect_multi = len(regions) >= 2 or any(r.solidity < min_solidity for r in regions)
++            if suspect_multi:
++                excluded["multi_tomat_rotten"].append((path, label))
++                continue
++        if not clean:
++            excluded["tomat_menyatu_atau_terpotong"].append((path, label))
++            continue
++        for order, region in enumerate(clean, start=1):
++            crop = crop_region(image, region, size=size, neutral_background=neutral_background)
++            name = f"{path.stem}_t{order}.jpg"
++            _write_jpeg(output_dir / label / name, crop)
++            records.append(
++                CropRecord(
++                    file=f"{label}/{name}",
++                    label=label,
++                    source=path.stem,
++                    index=source_index(path.stem),
++                    box=region.box,
++                    area_fraction=region.area_fraction,
++                    solidity=region.solidity,
++                    regions_in_source=len(regions),
++                    thumbnail=_thumbnail(crop),
++                )
++            )
++    return records, excluded, source_counts
++
++
++# --------------------------------------------------------------------------- kelompok & split
++
++
++def assign_groups(
++    records: Sequence[CropRecord], group_block: int = 20, dup_threshold: float = 0.985
++) -> list[int]:
++    """Union-find: foto sama, blok nomor berdekatan, dan crop hampir identik -> satu kelompok."""
++    count = len(records)
++    parent = list(range(count))
++
++    def find(item: int) -> int:
++        while parent[item] != item:
++            parent[item] = parent[parent[item]]
++            item = parent[item]
++        return item
++
++    def union(a: int, b: int) -> None:
++        root_a, root_b = find(a), find(b)
++        if root_a != root_b:
++            parent[max(root_a, root_b)] = min(root_a, root_b)
++
++    buckets: dict[Any, list[int]] = defaultdict(list)
++    for position, record in enumerate(records):
++        buckets[("source", record.label, record.source)].append(position)
++        if group_block > 0 and record.index is not None:
++            buckets[("block", record.label, record.index // group_block)].append(position)
++    for members in buckets.values():
++        for other in members[1:]:
++            union(members[0], other)
++
++    if dup_threshold > 0 and count > 1:
++        matrix = np.stack([record.thumbnail for record in records])
++        for start in range(0, count, 500):
++            similarity = matrix[start : start + 500] @ matrix.T
++            for row, column in np.argwhere(similarity >= dup_threshold):
++                if start + int(row) != int(column):
++                    union(start + int(row), int(column))
++
++    ids: dict[int, int] = {}
++    return [ids.setdefault(find(position), len(ids) + 1) for position in range(count)]
++
++
++def split_groups(
++    records: Sequence[CropRecord],
++    groups: Sequence[int],
++    seed: int = 42,
++    test_fraction: float = 0.15,
++    validation_fraction: float = 0.15,
++) -> dict[int, str]:
++    """Bagi kelompok ke train/validation/test per kelas, mendekati proporsi 70/15/15."""
++    members: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
++    for record, group in zip(records, groups):
++        members[record.label][group] += 1
++    rng = random.Random(seed)
++    assignment: dict[int, str] = {}
++    for label in sorted(members):
++        group_sizes = members[label]
++        if len(group_sizes) < 3:
++            raise ValueError(
++                f"Kelas {label!r} hanya punya {len(group_sizes)} kelompok; butuh minimal 3 "
++                "agar train/validation/test masing-masing terisi."
++            )
++        ordered = sorted(group_sizes)
++        rng.shuffle(ordered)
++        total = sum(group_sizes.values())
++        filled = Counter()
++        for group in ordered:
++            if filled["test"] < test_fraction * total:
++                split = "test"
++            elif filled["validation"] < validation_fraction * total:
++                split = "validation"
++            else:
++                split = "train"
++            assignment[group] = split
++            filled[split] += group_sizes[group]
++    return assignment
++
++
++def drop_label_conflicts(
++    records: list[CropRecord], groups: list[int], output_dir: Path
++) -> tuple[list[CropRecord], list[int], list[CropRecord]]:
++    labels_per_group: dict[int, set[str]] = defaultdict(set)
++    for record, group in zip(records, groups):
++        labels_per_group[group].add(record.label)
++    conflicted = {group for group, labels in labels_per_group.items() if len(labels) > 1}
++    kept, kept_groups, dropped = [], [], []
++    for record, group in zip(records, groups):
++        if group in conflicted:
++            dropped.append(record)
++            (output_dir / record.file).unlink(missing_ok=True)
++        else:
++            kept.append(record)
++            kept_groups.append(group)
++    return kept, kept_groups, dropped
++
++
++# --------------------------------------------------------------------------- QA & laporan
++
++
++def contact_sheet(
++    tiles: Sequence[tuple[np.ndarray, str]], path: Path, columns: int = 8, tile: int = 150
++) -> None:
++    if not tiles:
++        return
++    rows = (len(tiles) + columns - 1) // columns
++    sheet = np.full((rows * (tile + 16), columns * tile, 3), 255, dtype=np.uint8)
++    for position, (image, caption) in enumerate(tiles):
++        row, column = divmod(position, columns)
++        top, left = row * (tile + 16), column * tile
++        sheet[top + 16 : top + 16 + tile, left : left + tile] = cv2.resize(
++            image, (tile, tile), interpolation=cv2.INTER_AREA
++        )
++        cv2.putText(sheet, caption[:24], (left + 2, top + 11), cv2.FONT_HERSHEY_SIMPLEX,
++                    0.35, (0, 0, 0), 1, cv2.LINE_AA)
++    _write_jpeg(path, sheet)
++
++
++def write_qa_sheets(
++    records: Sequence[CropRecord],
++    excluded: dict[str, list[tuple[Path, str]]],
++    output_dir: Path,
++    seed: int,
++    samples: int = 48,
++) -> None:
++    qa = output_dir / "qa"
++    qa.mkdir(exist_ok=True)
++    rng = random.Random(seed)
++    for label in ("healthy", "reject"):
++        pool = [record for record in records if record.label == label]
++        chosen = rng.sample(pool, min(samples, len(pool)))
++        tiles = [
++            (cv2.imdecode(np.fromfile(str(output_dir / record.file), dtype=np.uint8), cv2.IMREAD_COLOR),
++             Path(record.file).stem)
++            for record in chosen
++        ]
++        contact_sheet(tiles, qa / f"crops_{label}.jpg")
++    for reason, items in excluded.items():
++        tiles = []
++        for path, label in rng.sample(items, min(24, len(items))):
++            try:
++                tiles.append((load_bgr(path, max_side=300), f"{label[:1].upper()}:{path.stem}"))
++            except Exception:  # noqa: BLE001
++                continue
++        contact_sheet(tiles, qa / f"excluded_{reason}.jpg", columns=6, tile=180)
++
++
++def build_report(
++    parameters: dict[str, Any],
++    source_counts: Counter,
++    records: Sequence[CropRecord],
++    excluded: dict[str, list[tuple[Path, str]]],
++    conflicts: Sequence[CropRecord],
++    groups: Sequence[int],
++    assignment: dict[int, str],
++) -> tuple[dict[str, Any], str]:
++    labels = ("healthy", "reject")
++    crop_counts = Counter(record.label for record in records)
++    group_sizes = Counter(groups)
++    largest = max(group_sizes.values()) if group_sizes else 0
++    split_crops: Counter = Counter()
++    split_groups_count: dict[tuple[str, str], set[int]] = defaultdict(set)
++    for record, group in zip(records, groups):
++        split_crops[(record.label, assignment[group])] += 1
++        split_groups_count[(record.label, assignment[group])].add(group)
++    solidity = [record.solidity for record in records]
++
++    exclusion_rows = []
++    for reason, description in REASONS.items():
++        per_label = Counter(label for _, label in excluded.get(reason, []))
++        if reason == "label_konflik":
++            per_label = Counter(record.label for record in conflicts)
++        exclusion_rows.append([reason, per_label["healthy"], per_label["reject"], description])
++    summary = {
++        "parameters": parameters,
++        "sources": dict(source_counts),
++        "crops": dict(crop_counts),
++        "excluded": {r: len(v) for r, v in excluded.items()} | {"label_konflik": len(conflicts)},
++        "groups": {"count": len(group_sizes), "largest": largest,
++                   "largest_fraction": (largest / len(records)) if records else None},
++        "split": {f"{label}/{split}": split_crops[(label, split)]
++                  for label in labels for split in ("train", "validation", "test")},
++        "solidity": {"min": float(min(solidity)) if solidity else None,
++                     "median": float(np.median(solidity)) if solidity else None},
++    }
++    split_rows = [
++        [label, split, split_crops[(label, split)], len(split_groups_count[(label, split)])]
++        for label in labels for split in ("train", "validation", "test")
++    ]
++    markdown = "\n\n".join([
++        "# Laporan persiapan dataset cacat v2",
++        "## Parameter\n\n" + render_table(["parameter", "nilai"], [[k, str(v)] for k, v in parameters.items()]),
++        "## Sumber dan hasil crop\n\n" + render_table(
++            ["kelas", "gambar sumber", "crop dipakai"],
++            [[label, source_counts[label], crop_counts[label]] for label in labels]),
++        "## Gambar yang dikecualikan\n\n" + render_table(
++            ["alasan", "healthy", "reject", "keterangan"], exclusion_rows)
++        + "\n\nLihat contoh di folder `qa/` (excluded_<alasan>.jpg) untuk memastikan penyaringan wajar.",
++        "## Split\n\n" + render_table(["kelas", "split", "crop", "kelompok"], split_rows),
++        "## Kelompok\n\n" + render_table(
++            ["ukuran", "nilai"],
++            [["jumlah kelompok", len(group_sizes)], ["kelompok terbesar (crop)", largest],
++             ["porsi kelompok terbesar", (largest / len(records)) if records else None],
++             ["solidity minimum crop", summary["solidity"]["min"]],
++             ["solidity median crop", summary["solidity"]["median"]]])
++        + "\n\nBila kelompok terbesar lebih dari ~10% total crop, ambang kemiripan terlalu longgar "
++          "(kelompok berantai): naikkan --dup-threshold.",
++        "## Langkah berikutnya\n\n1. Buka `qa/crops_healthy.jpg` dan `qa/crops_reject.jpg`; hapus "
++        "file crop yang salah label (manifest tetap valid).\n2. Latih dengan `--defect-data-dir` dan "
++        "`--split-manifest` (lihat docs/DATASET_CACAT_V2.md).",
++    ])
++    return summary, markdown
++
++
++# --------------------------------------------------------------------------- orkestrasi
++
++
++def prepare(
++    agml_dir: Path,
++    output_dir: Path,
++    size: int = 256,
++    neutral_background: bool = True,
++    multi_rotten: str = "exclude",
++    group_block: int = 20,
++    dup_threshold: float = 0.985,
++    seed: int = 42,
++    limit: int | None = None,
++    overwrite: bool = False,
++    qa_samples: int = 48,
++) -> dict[str, Any]:
++    if multi_rotten not in {"exclude", "include"}:
++        raise ValueError("multi_rotten must be 'exclude' or 'include'.")
++    output_dir = Path(output_dir)
++    existing = [name for name in MANAGED_ENTRIES if (output_dir / name).exists()]
++    if existing and not overwrite:
++        raise FileExistsError(
++            f"{output_dir} sudah berisi hasil sebelumnya ({existing}). "
++            "Pakai --output-dir lain atau --overwrite."
++        )
++    for name in existing:
++        target = output_dir / name
++        shutil.rmtree(target) if target.is_dir() else target.unlink()
++    output_dir.mkdir(parents=True, exist_ok=True)
++
++    sources = list_sources(agml_dir, limit)
++    logger.info("Memproses %d gambar sumber dari %s", len(sources), agml_dir)
++    records, excluded, source_counts = process_sources(
++        sources, output_dir, size, neutral_background, multi_rotten
++    )
++    if not records:
++        raise ValueError("Tidak ada crop yang lolos penyaringan; periksa dataset dan ambang segmentasi.")
++    groups = assign_groups(records, group_block, dup_threshold)
++    records, groups, conflicts = drop_label_conflicts(records, groups, output_dir)
++    if not records:
++        raise ValueError("Semua crop berada di kelompok berlabel konflik.")
++    assignment = split_groups(records, groups, seed)
++
++    with (output_dir / "split_manifest.csv").open("w", newline="", encoding="utf-8") as file:
++        writer = csv.writer(file, lineterminator="\n")
++        writer.writerow(["file", "split", "group"])
++        for record, group in sorted(zip(records, groups), key=lambda pair: pair[0].file):
++            writer.writerow([record.file, assignment[group], f"g{group:05d}"])
++    with (output_dir / "crops_index.csv").open("w", newline="", encoding="utf-8") as file:
++        writer = csv.writer(file, lineterminator="\n")
++        writer.writerow(["file", "label", "source", "box_x", "box_y", "box_w", "box_h",
++                         "area_fraction", "solidity", "regions_in_source"])
++        for record in sorted(records, key=lambda item: item.file):
++            writer.writerow([record.file, record.label, record.source, *record.box,
++                             f"{record.area_fraction:.4f}", f"{record.solidity:.4f}",
++                             record.regions_in_source])
++
++    parameters = {
++        "agml_dir": str(agml_dir), "size": size,
++        "background": "neutral" if neutral_background else "keep",
++        "multi_rotten": multi_rotten, "group_block": group_block,
++        "dup_threshold": dup_threshold, "seed": seed, "limit": limit,
++        "min_solidity": MIN_SOLIDITY,
++    }
++    summary, markdown = build_report(
++        parameters, source_counts, records, excluded, conflicts, groups, assignment
++    )
++    (output_dir / "prepare_report.md").write_text(markdown + "\n", encoding="utf-8")
++    (output_dir / "prepare_report.json").write_text(
++        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
++    )
++    write_qa_sheets(records, excluded, output_dir, seed, qa_samples)
++    logger.info("\n%s", markdown)
++    return summary
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
++    parser.add_argument("--agml-dir", required=True, type=Path, help="Folder berisi Fresh/ dan Rotten/.")
++    parser.add_argument("--output-dir", required=True, type=Path)
++    parser.add_argument("--size", type=int, default=256, help="Sisi crop persegi (piksel).")
++    parser.add_argument("--background", choices=["neutral", "keep"], default="neutral",
++                        help="neutral: latar diganti warna netral; keep: latar asli dipertahankan.")
++    parser.add_argument("--multi-rotten", choices=["exclude", "include"], default="exclude")
++    parser.add_argument("--group-block", type=int, default=20,
++                        help="Foto bernomor berdekatan (blok N) dianggap satu sesi; 0 = nonaktif.")
++    parser.add_argument("--dup-threshold", type=float, default=0.985,
++                        help="Korelasi minimum dua crop dianggap salinan nyaris identik; 0 = nonaktif.\n"
++                             "Hanya menangkap salinan hasil simpan ulang/resize. Pada uji 18 tomat berbeda,\n"
++                             "korelasi maksimum antar-tomat 0,93-0,94: jangan turunkan di bawah ~0,95.")
++    parser.add_argument("--seed", type=int, default=42)
++    parser.add_argument("--limit", type=int, default=None, help="Hanya N gambar pertama per kelas (uji cepat).")
++    parser.add_argument("--overwrite", action="store_true")
++    args = parser.parse_args()
++    logging.basicConfig(level=logging.INFO, format="%(message)s")
++    prepare(args.agml_dir, args.output_dir, args.size, args.background == "neutral",
++            args.multi_rotten, args.group_block, args.dup_threshold, args.seed, args.limit,
++            args.overwrite)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/ml/train.py b/ml/train.py
+index a6284d7..c650137 100644
+--- a/ml/train.py
++++ b/ml/train.py
+@@ -599,13 +599,33 @@ def _evaluate_primary(
+     }
+ 
+ 
++def _crop_for_inference(image: Any, mode: str) -> Any:
++    """Crop tomat dengan fungsi yang sama seperti persiapan dataset (vision.crop), atau None."""
++    import cv2
++    from PIL import Image
++
++    from vision.crop import crop_largest_tomato, pil_to_bgr
++
++    # Di alat hanya ada satu tomat: tidak perlu uji solidity ketat (itu untuk memurnikan dataset).
++    crop = crop_largest_tomato(
++        pil_to_bgr(image), size=256, neutral_background=(mode == "neutral"), min_solidity=0.0
++    )
++    return None if crop is None else Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
++
++
+ def _evaluate_defect_primary(
+     data_root: Path,
+     defect_model: Any,
+     class_names: Sequence[str],
+     architecture: str = DEFAULT_ARCHITECTURE,
++    crop_mode: str | None = None,
+ ) -> dict[str, Any]:
+-    """Evaluasi khusus model cacat pada foto primer, termasuk p_reject per foto."""
++    """Evaluasi khusus model cacat pada foto primer, termasuk p_reject per foto.
++
++    crop_mode None = foto penuh (seperti model lama); "neutral"/"keep" = crop tomat dengan latar
++    netral/asli, harus sama dengan cara dataset training dibuat. Foto yang crop-nya gagal tidak ikut
++    dihitung dan dilaporkan terpisah.
++    """
+     from PIL import Image
+ 
+     preprocess_input = get_preprocess_input(architecture)
+@@ -613,8 +633,23 @@ def _evaluate_defect_primary(
+     rows: list[dict[str, Any]] = []
+     for path, labels in _primary_test_samples(data_root):
+         with Image.open(path) as source:
+-            image = source.convert("RGB").resize((INPUT_SIZE[1], INPUT_SIZE[0]))
+-            pixels = np.asarray(image, dtype=np.float32)
++            image = source.convert("RGB")
++        status = "full_frame"
++        if crop_mode is not None:
++            cropped = _crop_for_inference(image, crop_mode)
++            if cropped is None:
++                rows.append(
++                    {
++                        "file": path.name,
++                        "actual_defect_level": int(labels["tingkat_cacat"]),
++                        "p_reject": None,
++                        "predicted": None,
++                        "crop_status": "gagal",
++                    }
++                )
++                continue
++            image, status = cropped, f"crop_{crop_mode}"
++        pixels = np.asarray(image.resize((INPUT_SIZE[1], INPUT_SIZE[0])), dtype=np.float32)
+         probabilities = defect_model.predict(
+             preprocess_input(np.expand_dims(pixels, axis=0)), verbose=0
+         )[0]
+@@ -624,33 +659,39 @@ def _evaluate_defect_primary(
+                 "actual_defect_level": int(labels["tingkat_cacat"]),
+                 "p_reject": float(probabilities[reject_index]),
+                 "predicted": class_names[int(np.argmax(probabilities))],
++                "crop_status": status,
+             }
+         )
+ 
++    scored = [row for row in rows if row["p_reject"] is not None]
+     per_level: dict[int, dict[str, Any]] = {}
+     for level in (1, 2, 3):
+-        scores = [row["p_reject"] for row in rows if row["actual_defect_level"] == level]
++        scores = [row["p_reject"] for row in scored if row["actual_defect_level"] == level]
+         rejected = sum(
+-            1 for row in rows
++            1 for row in scored
+             if row["actual_defect_level"] == level and row["predicted"] == "reject"
+         )
+         per_level[level] = {
+             "images": len(scores),
++            "no_crop": sum(
++                1 for row in rows
++                if row["actual_defect_level"] == level and row["p_reject"] is None
++            ),
+             "predicted_reject": rejected,
+             "predicted_reject_rate": (rejected / len(scores)) if scores else None,
+             "mean_p_reject": float(np.mean(scores)) if scores else None,
+             "median_p_reject": float(np.median(scores)) if scores else None,
+         }
+ 
+-    binary = [row for row in rows if row["actual_defect_level"] in (1, 3)]
++    binary = [row for row in scored if row["actual_defect_level"] in (1, 3)]
+     level_1_vs_3 = binary_ranking_metrics(
+         [1 if row["actual_defect_level"] == 3 else 0 for row in binary],
+         [row["p_reject"] for row in binary],
+         max_fpr=GATE_MAX_FPR,
+     )
+     level_1_vs_2_or_3 = binary_ranking_metrics(
+-        [0 if row["actual_defect_level"] == 1 else 1 for row in rows],
+-        [row["p_reject"] for row in rows],
++        [0 if row["actual_defect_level"] == 1 else 1 for row in scored],
++        [row["p_reject"] for row in scored],
+         max_fpr=GATE_MAX_FPR,
+     )
+     constrained = level_1_vs_3["constrained"]
+@@ -663,6 +704,9 @@ def _evaluate_defect_primary(
+     )
+     return {
+         "images": len(rows),
++        "scored_images": len(scored),
++        "no_crop": len(rows) - len(scored),
++        "input": "full_frame" if crop_mode is None else f"crop_{crop_mode}",
+         "per_level": per_level,
+         "level1_vs_level3": level_1_vs_3,
+         "level1_vs_level2_or_3": level_1_vs_2_or_3,
+@@ -682,6 +726,7 @@ def _defect_primary_sections(primary: dict[str, Any]) -> list[tuple[str, str]]:
+         [
+             f"level {level}",
+             values["images"],
++            values.get("no_crop", 0),
+             values["predicted_reject"],
+             values["predicted_reject_rate"],
+             values["mean_p_reject"],
+@@ -693,6 +738,8 @@ def _defect_primary_sections(primary: dict[str, Any]) -> list[tuple[str, str]]:
+     fixed = ranking["fixed_threshold"]
+     constrained = ranking["constrained"] or {}
+     summary_rows = [
++        ["masukan model", None, str(primary.get("input", "full_frame"))],
++        ["foto tanpa crop valid (tidak dihitung)", primary.get("no_crop", 0), ""],
+         ["jumlah level 1 / level 3", None, f"{ranking['negatives']} / {ranking['positives']}"],
+         ["AUC level 1 vs 3", ranking["auc"], ""],
+         ["AUC level 1 vs 2+3", primary["level1_vs_level2_or_3"]["auc"], ""],
+@@ -720,7 +767,8 @@ def _defect_primary_sections(primary: dict[str, Any]) -> list[tuple[str, str]]:
+         (
+             "Primer - model cacat per level cacat sebenarnya",
+             render_table(
+-                ["level", "n", "diprediksi reject", "proporsi", "mean p_reject", "median p_reject"],
++                ["level", "n", "tanpa crop", "diprediksi reject", "proporsi", "mean p_reject",
++                 "median p_reject"],
+                 level_rows,
+             ),
+         ),
+@@ -736,6 +784,40 @@ def format_threshold(value: float | None) -> str:
+     return "-" if value is None else f"{value:.4f}"
+ 
+ 
++def _read_preparation_info(directory: Path | None) -> dict[str, Any] | None:
++    """Parameter persiapan dataset (prepare_report.json dari ml.prepare_defect_v2), bila ada."""
++    if directory is None:
++        return None
++    path = Path(directory) / "prepare_report.json"
++    if not path.is_file():
++        return None
++    try:
++        parameters = json.loads(path.read_text(encoding="utf-8")).get("parameters")
++    except (OSError, ValueError):
++        return None
++    return parameters if isinstance(parameters, dict) else None
++
++
++def _resolve_primary_crop(
++    primary_crop: str | None, preparation: dict[str, Any] | None
++) -> str | None:
++    """auto -> ikuti cara dataset dibuat; selain itu pakai pilihan eksplisit dan peringatkan bila beda."""
++    if primary_crop == "auto":
++        resolved = preparation.get("background") if preparation else None
++        logger.info("--primary-crop auto -> %s", resolved or "none (foto penuh)")
++        return resolved
++    built_with = preparation.get("background") if preparation else None
++    if built_with and primary_crop != built_with:
++        logger.warning(
++            "Dataset dibuat dengan crop latar '%s' tetapi evaluasi primer memakai '%s'. "
++            "Hasil gate tidak sebanding; gunakan --primary-crop %s.",
++            built_with,
++            primary_crop or "foto penuh",
++            built_with,
++        )
++    return primary_crop
++
++
+ def _split_count_table(metadata: dict[str, Any]) -> str:
+     classes = metadata["class_names"]
+     rows = []
+@@ -802,7 +884,9 @@ def _write_run_outputs(
+         ) as file:
+             writer = csv.DictWriter(
+                 file,
+-                fieldnames=["file", "actual_defect_level", "p_reject", "predicted"],
++                fieldnames=["file", "actual_defect_level", "p_reject", "predicted", "crop_status"],
++                restval="",
++                lineterminator="\n",
+             )
+             writer.writeheader()
+             writer.writerows(primary_defect["rows"])
+@@ -829,6 +913,7 @@ def _run_training(
+     split_manifest: Path | None,
+     run: RunLog | None,
+     tensorboard: bool,
++    primary_crop: str | None = None,
+ ) -> dict[str, Any]:
+     secondary = root / "Sekunder"
+     ripeness_root = secondary / "kematangan" / "Klasifikasi Kematangan Tomat"
+@@ -850,6 +935,9 @@ def _run_training(
+         "defect": (DEFECT_CLASSES, DEFECT_LEVELS, defect_directories),
+     }
+ 
++    preparation = _read_preparation_info(defect_data_dir) if "defect" in selected else None
++    primary_crop = _resolve_primary_crop(primary_crop, preparation)
++
+     # Kumpulkan semua sampel dulu supaya folder yang salah ketahuan sebelum training mulai.
+     collected = {task: _collect_samples(definitions[task][2]) for task in selected}
+     models: dict[str, Any] = {}
+@@ -873,6 +961,8 @@ def _run_training(
+             tensorboard,
+         )
+ 
++    if preparation is not None and "defect" in metadata:
++        metadata["defect"]["data_preparation"] = preparation
+     for task in selected:
+         artifact_paths(output_directory, task, architecture)[1].write_text(
+             json.dumps(metadata[task], indent=2, ensure_ascii=False),
+@@ -903,7 +993,7 @@ def _run_training(
+         # Model sudah tersimpan; kegagalan evaluasi primer tidak boleh menghapus hasil training.
+         try:
+             primary_defect = _evaluate_defect_primary(
+-                root, models["defect"], DEFECT_CLASSES, architecture
++                root, models["defect"], DEFECT_CLASSES, architecture, primary_crop
+             )
+             report["defect_primary_independent_test"] = {
+                 key: value for key, value in primary_defect.items() if key != "rows"
+@@ -932,6 +1022,7 @@ def train(
+     run_name: str = "train",
+     tensorboard: bool = False,
+     overwrite_models: bool = False,
++    primary_crop: str | None = None,
+ ) -> dict[str, Any]:
+     """Train the requested heads and evaluate on secondary holdouts and primary photos."""
+     validate_architecture(architecture)
+@@ -946,6 +1037,8 @@ def train(
+         raise ValueError(f"tasks must be a non-empty subset of {TASKS}; got {list(tasks)}.")
+     if split_manifest is not None and len(selected) != 1:
+         raise ValueError("split_manifest can only be used when training a single task.")
++    if primary_crop not in (None, "auto", "neutral", "keep"):
++        raise ValueError("primary_crop must be None, 'auto', 'neutral' or 'keep'.")
+     root = Path(data_root)
+     output_directory = Path(models_dir)
+     if set(selected) != set(TASKS) and not reuse_existing and not overwrite_models:
+@@ -987,6 +1080,7 @@ def train(
+                 "defect_data_dir": str(defect_data_dir) if defect_data_dir else None,
+                 "split_manifest": str(split_manifest) if split_manifest else None,
+                 "reuse_existing": reuse_existing,
++                "primary_crop": primary_crop,
+                 "device": device,
+             },
+         )
+@@ -1005,6 +1099,7 @@ def train(
+             Path(split_manifest) if split_manifest else None,
+             run,
+             tensorboard,
++            primary_crop,
+         )
+     except BaseException:
+         logger.exception("Training berhenti karena error.")
+@@ -1078,6 +1173,13 @@ def main() -> None:
+     parser.add_argument(
+         "--tensorboard", action="store_true", help="Tulis juga log TensorBoard ke folder run."
+     )
++    parser.add_argument(
++        "--primary-crop",
++        choices=["auto", "none", "neutral", "keep"],
++        default="auto",
++        help="Masukan evaluasi foto primer model cacat. auto: ikuti cara dataset v2 dibuat "
++        "(prepare_report.json), foto penuh bila tidak ada; none: foto penuh; neutral/keep: crop tomat.",
++    )
+     parser.add_argument(
+         "--overwrite-models",
+         action="store_true",
+@@ -1102,6 +1204,7 @@ def main() -> None:
+             run_name=args.run_name,
+             tensorboard=args.tensorboard,
+             overwrite_models=args.overwrite_models,
++            primary_crop=None if args.primary_crop == "none" else args.primary_crop,
+         )
+         _release_session()
+     print(json.dumps(results, indent=2, ensure_ascii=False))
+diff --git a/tests/test_defect_primary_crop.py b/tests/test_defect_primary_crop.py
+new file mode 100644
+index 0000000..e28b037
+--- /dev/null
++++ b/tests/test_defect_primary_crop.py
+@@ -0,0 +1,123 @@
++import json
++import logging
++from pathlib import Path
++
++import cv2
++import numpy as np
++import pytest
++
++import ml.train as train_module
++
++
++class _FakeModel:
++    def __init__(self, p_reject: float) -> None:
++        self.p_reject = p_reject
++        self.shapes: list[tuple[int, ...]] = []
++
++    def predict(self, batch, verbose=0):
++        self.shapes.append(tuple(batch.shape))
++        return np.array([[1.0 - self.p_reject, self.p_reject]])
++
++
++def _photo(path: Path, tomato: bool = True, seed: int = 0) -> Path:
++    image = np.full((300, 500, 3), 255, dtype=np.uint8)
++    if tomato:
++        rng = np.random.default_rng(seed)
++        cv2.ellipse(image, (250, 150), (60, 66), 0, 0, 360, (30, 40, 200), -1)
++        cv2.circle(image, (230 + int(rng.integers(0, 40)), 140), 10, (10, 10, 10), -1)
++    ok, encoded = cv2.imencode(".jpg", image)
++    assert ok
++    path.write_bytes(encoded.tobytes())
++    return path
++
++
++@pytest.fixture
++def primary(tmp_path: Path, monkeypatch):
++    levels = [1, 1, 1, 1, 1, 1, 2, 3, 3, 3, 1]  # foto terakhir kosong (tanpa tomat)
++    samples = []
++    for index, level in enumerate(levels):
++        path = _photo(tmp_path / f"T{index:03d}.jpg", tomato=index != len(levels) - 1, seed=index)
++        samples.append((path, {"tingkat_cacat": level}))
++    monkeypatch.setattr(train_module, "_primary_test_samples", lambda root: samples)
++    monkeypatch.setattr(
++        train_module, "get_preprocess_input", lambda architecture: (lambda pixels: pixels / 255.0)
++    )
++    return samples
++
++
++def test_full_frame_mode_scores_every_photo(primary, tmp_path: Path):
++    model = _FakeModel(0.9)
++
++    result = train_module._evaluate_defect_primary(tmp_path, model, ["healthy", "reject"])
++
++    assert result["input"] == "full_frame"
++    assert result["scored_images"] == len(primary) and result["no_crop"] == 0
++    assert {row["crop_status"] for row in result["rows"]} == {"full_frame"}
++    assert set(model.shapes) == {(1, 224, 224, 3)}
++
++
++def test_crop_mode_skips_photos_without_a_tomato_and_reports_them(primary, tmp_path: Path):
++    model = _FakeModel(0.9)
++
++    result = train_module._evaluate_defect_primary(
++        tmp_path, model, ["healthy", "reject"], crop_mode="neutral"
++    )
++
++    assert result["input"] == "crop_neutral"
++    assert result["no_crop"] == 1 and result["scored_images"] == len(primary) - 1
++    failed = [row for row in result["rows"] if row["crop_status"] == "gagal"]
++    assert len(failed) == 1 and failed[0]["p_reject"] is None
++    assert result["per_level"][1]["images"] == 6  # 7 foto level 1, satu tanpa crop
++    assert result["per_level"][1]["no_crop"] == 1
++    assert result["level1_vs_level3"]["negatives"] == 6
++    assert set(model.shapes) == {(1, 224, 224, 3)}  # crop 256 diubah ke ukuran masukan model
++
++
++def test_crop_status_is_written_to_the_predictions_rows(primary, tmp_path: Path):
++    result = train_module._evaluate_defect_primary(
++        tmp_path, _FakeModel(0.2), ["healthy", "reject"], crop_mode="keep"
++    )
++
++    statuses = {row["crop_status"] for row in result["rows"]}
++    assert statuses == {"crop_keep", "gagal"}
++    sections = dict(train_module._defect_primary_sections(result))
++    assert "tanpa crop" in sections["Primer - model cacat per level cacat sebenarnya"]
++    assert "crop_keep" in sections["Primer - ringkasan model cacat"]
++
++
++def test_resolve_primary_crop_auto_follows_the_dataset_preparation():
++    assert train_module._resolve_primary_crop("auto", {"background": "neutral"}) == "neutral"
++    assert train_module._resolve_primary_crop("auto", {"background": "keep"}) == "keep"
++    assert train_module._resolve_primary_crop("auto", None) is None
++
++
++def test_resolve_primary_crop_warns_when_it_differs_from_the_dataset(caplog):
++    with caplog.at_level(logging.WARNING, logger="ml.train"):
++        resolved = train_module._resolve_primary_crop(None, {"background": "neutral"})
++
++    assert resolved is None
++    assert "--primary-crop neutral" in caplog.text
++
++
++def test_resolve_primary_crop_is_quiet_when_consistent(caplog):
++    with caplog.at_level(logging.WARNING, logger="ml.train"):
++        assert train_module._resolve_primary_crop("neutral", {"background": "neutral"}) == "neutral"
++        assert train_module._resolve_primary_crop(None, None) is None
++
++    assert caplog.text == ""
++
++
++def test_read_preparation_info(tmp_path: Path):
++    assert train_module._read_preparation_info(None) is None
++    assert train_module._read_preparation_info(tmp_path) is None
++    (tmp_path / "prepare_report.json").write_text("{rusak", encoding="utf-8")
++    assert train_module._read_preparation_info(tmp_path) is None
++    (tmp_path / "prepare_report.json").write_text(
++        json.dumps({"parameters": {"background": "neutral", "size": 256}}), encoding="utf-8"
++    )
++    assert train_module._read_preparation_info(tmp_path) == {"background": "neutral", "size": 256}
++
++
++def test_train_rejects_unknown_primary_crop(tmp_path: Path):
++    with pytest.raises(ValueError, match="primary_crop"):
++        train_module.train(tmp_path, tmp_path / "m", primary_crop="blur")
+diff --git a/tests/test_prepare_defect_v2.py b/tests/test_prepare_defect_v2.py
+new file mode 100644
+index 0000000..52a3b52
+--- /dev/null
++++ b/tests/test_prepare_defect_v2.py
+@@ -0,0 +1,196 @@
++import csv
++import shutil
++from pathlib import Path
++
++import cv2
++import numpy as np
++import pytest
++
++from ml.prepare_defect_v2 import (
++    assign_groups,
++    prepare,
++    source_index,
++)
++from ml.train import Sample, _split_samples_from_manifest
++from vision.crop import NEUTRAL_BACKGROUND_BGR
++
++RED = (30, 40, 200)
++
++
++def _write(path: Path, image: np.ndarray) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    ok, encoded = cv2.imencode(".jpg", image)
++    assert ok
++    path.write_bytes(encoded.tobytes())
++
++
++def _scene(centers, radius=50, seed=0, spot=False):
++    """Tomat sintetis dengan bercak acak di dalamnya, supaya tiap gambar punya "tekstur" sendiri."""
++    rng = np.random.default_rng(seed)
++    image = np.full((300, 500, 3), 255, dtype=np.uint8)
++    for number, (cx, cy) in enumerate(centers):
++        shade = int(rng.integers(0, 40))
++        cv2.ellipse(image, (cx, cy), (radius, radius + 6), 0, 0, 360, (30 + shade, 40, 200 - shade), -1)
++        for _ in range(4):
++            dx, dy = int(rng.integers(-radius // 2, radius // 2)), int(rng.integers(-radius // 2, radius // 2))
++            tone = int(rng.integers(60, 255))
++            cv2.circle(image, (cx + dx, cy + dy), int(rng.integers(5, 14)), (tone // 3, tone // 2, tone), -1)
++        if spot and number == 0:
++            cv2.circle(image, (cx, cy), 12, (10, 10, 10), -1)
++    return image
++
++
++def _agml(root: Path, fresh=8, rotten=8, extras=True) -> Path:
++    for index in range(fresh):
++        _write(root / "Fresh" / f"AGML_{636 + index * 50:04d}.jpg", _scene([(180 + 10 * index, 150)], seed=index))
++    for index in range(rotten):
++        _write(root / "Rotten" / f"AGML_{index * 50:04d}.jpg",
++               _scene([(200, 130 + 5 * index)], seed=100 + index, spot=True))
++    if extras:
++        _write(root / "Rotten" / "AGML_0401.jpg", _scene([(120, 150), (380, 150)]))  # dua terpisah
++        _write(root / "Rotten" / "AGML_0451.jpg", _scene([(200, 150), (300, 150)]))  # menyatu
++        _write(root / "Fresh" / "AGML_1999.jpg", np.full((300, 500, 3), 255, dtype=np.uint8))  # kosong
++    return root
++
++
++def _kwargs(**overrides):
++    base = dict(group_block=0, dup_threshold=0.0, qa_samples=4)
++    base.update(overrides)
++    return base
++
++
++def _manifest(path: Path) -> list[dict[str, str]]:
++    with path.open(newline="", encoding="utf-8") as file:
++        return list(csv.DictReader(file))
++
++
++def test_source_index_reads_trailing_number():
++    assert source_index("AGML_0003") == 3
++    assert source_index("foto") is None
++
++
++def test_prepare_builds_dataset_manifest_and_report(tmp_path: Path):
++    agml = _agml(tmp_path / "agml")
++    out = tmp_path / "v2"
++
++    summary = prepare(agml, out, size=128, **_kwargs())
++
++    assert summary["crops"] == {"healthy": 8, "reject": 8}
++    assert summary["excluded"]["multi_tomat_rotten"] == 2  # terpisah + menyatu
++    assert summary["excluded"]["tidak_ada_tomat"] == 1
++    assert len(list((out / "healthy").glob("*.jpg"))) == 8
++    assert (out / "prepare_report.md").read_text(encoding="utf-8").startswith("# Laporan")
++    assert (out / "qa" / "crops_reject.jpg").is_file()
++    assert (out / "qa" / "excluded_multi_tomat_rotten.jpg").is_file()
++
++    rows = _manifest(out / "split_manifest.csv")
++    assert {row["split"] for row in rows} == {"train", "validation", "test"}
++    samples = [
++        Sample(out / row["file"], row["file"].split("/")[0], row["file"]) for row in rows
++    ]
++    train_part, validation_part, test_part = _split_samples_from_manifest(samples, out / "split_manifest.csv")
++    assert train_part and validation_part and test_part
++
++
++def test_multi_rotten_include_keeps_every_clean_tomato(tmp_path: Path):
++    agml = _agml(tmp_path / "agml")
++
++    summary = prepare(agml, tmp_path / "v2", size=96, multi_rotten="include", **_kwargs())
++
++    assert summary["crops"]["reject"] == 8 + 2  # dua tomat terpisah ikut; yang menyatu tetap ditolak
++    assert summary["excluded"]["tomat_menyatu_atau_terpotong"] == 1
++
++
++def test_neutral_and_keep_background_differ_at_the_corner(tmp_path: Path):
++    agml = _agml(tmp_path / "agml", extras=False)
++
++    prepare(agml, tmp_path / "neutral", size=128, neutral_background=True, **_kwargs())
++    prepare(agml, tmp_path / "keep", size=128, neutral_background=False, **_kwargs())
++
++    name = sorted(p.name for p in (tmp_path / "neutral" / "healthy").glob("*.jpg"))[0]
++    neutral = cv2.imread(str(tmp_path / "neutral" / "healthy" / name))
++    kept = cv2.imread(str(tmp_path / "keep" / "healthy" / name))
++    assert np.abs(neutral[2, 2].astype(int) - np.array(NEUTRAL_BACKGROUND_BGR)).max() <= 6
++    assert kept[2, 2].min() >= 245
++
++
++def test_duplicate_copies_share_a_group_and_a_split(tmp_path: Path):
++    agml = _agml(tmp_path / "agml", extras=False)
++    source = next((agml / "Fresh").glob("*.jpg"))
++    shutil.copy(source, agml / "Fresh" / "AGML_1500.jpg")
++
++    prepare(agml, tmp_path / "v2", size=128, **_kwargs(dup_threshold=0.985))
++
++    rows = {row["file"]: row for row in _manifest(tmp_path / "v2" / "split_manifest.csv")}
++    original = rows[f"healthy/{source.stem}_t1.jpg"]
++    copy = rows["healthy/AGML_1500_t1.jpg"]
++    assert original["group"] == copy["group"]
++    assert original["split"] == copy["split"]
++
++
++def test_same_image_in_both_classes_is_removed_as_label_conflict(tmp_path: Path):
++    agml = _agml(tmp_path / "agml", extras=False)
++    shutil.copy(next((agml / "Fresh").glob("*.jpg")), agml / "Rotten" / "AGML_0777.jpg")
++
++    summary = prepare(agml, tmp_path / "v2", size=128, **_kwargs(dup_threshold=0.985))
++
++    assert summary["excluded"]["label_konflik"] == 2
++    assert not (tmp_path / "v2" / "reject" / "AGML_0777_t1.jpg").exists()
++    assert len(list((tmp_path / "v2" / "healthy").glob("*.jpg"))) == 7
++
++
++def test_nearby_numbered_photos_form_one_session_group(tmp_path: Path):
++    agml = tmp_path / "agml"
++    for index in (0, 1, 2, 300, 600, 900, 1200):
++        _write(agml / "Rotten" / f"AGML_{index:04d}.jpg", _scene([(200, 150)], seed=index, spot=True))
++    for index in range(1000, 1007):
++        _write(agml / "Fresh" / f"AGML_{index * 50:04d}.jpg", _scene([(200, 150)], seed=index))
++
++    prepare(agml, tmp_path / "v2", size=96, **_kwargs(group_block=10))
++
++    rows = {row["file"]: row["group"] for row in _manifest(tmp_path / "v2" / "split_manifest.csv")}
++    assert rows["reject/AGML_0000_t1.jpg"] == rows["reject/AGML_0001_t1.jpg"] == rows["reject/AGML_0002_t1.jpg"]
++    assert rows["reject/AGML_0300_t1.jpg"] != rows["reject/AGML_0000_t1.jpg"]
++
++
++def test_refuses_to_overwrite_and_is_deterministic(tmp_path: Path):
++    agml = _agml(tmp_path / "agml")
++    out = tmp_path / "v2"
++    prepare(agml, out, size=96, **_kwargs())
++    first = (out / "split_manifest.csv").read_text(encoding="utf-8")
++
++    with pytest.raises(FileExistsError, match="--overwrite"):
++        prepare(agml, out, size=96, **_kwargs())
++    prepare(agml, out, size=96, overwrite=True, **_kwargs())
++
++    assert (out / "split_manifest.csv").read_text(encoding="utf-8") == first
++    assert "\r" not in first
++
++
++def test_too_few_groups_per_class_is_a_clear_error(tmp_path: Path):
++    agml = _agml(tmp_path / "agml", fresh=8, rotten=2, extras=False)
++
++    with pytest.raises(ValueError, match="minimal 3"):
++        prepare(agml, tmp_path / "v2", size=96, **_kwargs())
++
++
++def test_missing_class_folder_is_reported(tmp_path: Path):
++    (tmp_path / "agml" / "Fresh").mkdir(parents=True)
++
++    with pytest.raises(FileNotFoundError, match="rotten"):
++        prepare(tmp_path / "agml", tmp_path / "v2", **_kwargs())
++
++
++def test_assign_groups_unions_by_source_even_across_boxes():
++    from ml.prepare_defect_v2 import CropRecord
++
++    thumb = np.zeros(4, dtype=np.float32)
++    records = [
++        CropRecord("reject/a_t1.jpg", "reject", "a", 1, (0, 0, 1, 1), 0.1, 0.99, 2, thumb),
++        CropRecord("reject/a_t2.jpg", "reject", "a", 1, (0, 0, 1, 1), 0.1, 0.99, 2, thumb),
++        CropRecord("reject/b_t1.jpg", "reject", "b", 900, (0, 0, 1, 1), 0.1, 0.99, 1, thumb),
++    ]
++
++    groups = assign_groups(records, group_block=20, dup_threshold=0.0)
++
++    assert groups[0] == groups[1] != groups[2]
+diff --git a/tests/test_vision_crop.py b/tests/test_vision_crop.py
+new file mode 100644
+index 0000000..e6e7e20
+--- /dev/null
++++ b/tests/test_vision_crop.py
+@@ -0,0 +1,113 @@
++import cv2
++import numpy as np
++
++from vision.crop import (
++    NEUTRAL_BACKGROUND_BGR,
++    crop_largest_tomato,
++    crop_region,
++    find_tomato_regions,
++    is_clean_single_tomato,
++)
++
++RED = (30, 40, 200)  # BGR, jenuh
++
++
++def _canvas(width=400, height=300):
++    return np.full((height, width, 3), 255, dtype=np.uint8)
++
++
++def _tomato(image, center, axes=(60, 66)):
++    cv2.ellipse(image, center, axes, 0, 0, 360, RED, -1)
++    return image
++
++
++def test_single_tomato_is_found_and_clean():
++    image = _tomato(_canvas(), (200, 150))
++
++    regions = find_tomato_regions(image)
++
++    assert len(regions) == 1
++    assert regions[0].solidity > 0.95
++    assert not regions[0].touches_border
++    assert is_clean_single_tomato(regions[0])
++
++
++def test_touching_tomatoes_are_rejected_as_not_single():
++    image = _canvas(500, 300)
++    _tomato(image, (190, 150), (50, 50))
++    _tomato(image, (290, 150), (50, 50))
++
++    regions = find_tomato_regions(image)
++
++    assert len(regions) == 1  # menyatu, sengaja tidak dipisahkan
++    assert regions[0].solidity < 0.92
++    assert not is_clean_single_tomato(regions[0])
++
++
++def test_separate_tomatoes_are_two_regions():
++    image = _canvas(600, 300)
++    _tomato(image, (150, 150), (50, 50))
++    _tomato(image, (450, 150), (50, 50))
++
++    regions = find_tomato_regions(image)
++
++    assert len(regions) == 2
++    assert all(is_clean_single_tomato(region) for region in regions)
++
++
++def test_tomato_touching_the_image_border_is_not_clean():
++    image = _tomato(_canvas(), (20, 150))
++
++    regions = find_tomato_regions(image)
++
++    assert regions and regions[0].touches_border
++    assert not is_clean_single_tomato(regions[0])
++
++
++def test_blank_image_has_no_tomato():
++    assert find_tomato_regions(_canvas()) == []
++    assert crop_largest_tomato(_canvas()) is None
++
++
++def test_crop_is_square_and_keeps_the_shape_undistorted():
++    image = _tomato(_canvas(), (200, 150), axes=(40, 80))  # lonjong tegak
++    region = find_tomato_regions(image)[0]
++
++    crop = crop_region(image, region, size=200, neutral_background=False)
++
++    assert crop.shape == (200, 200, 3)
++    red = (np.abs(crop.astype(int) - np.array(RED)).sum(axis=2) < 60).astype(np.uint8)
++    x, y, w, h = cv2.boundingRect(red)
++    assert abs((w / h) - (40 / 80)) < 0.08
++
++
++def test_neutral_background_replaces_everything_outside_the_tomato():
++    image = _tomato(_canvas(), (200, 150), axes=(40, 40))
++    region = find_tomato_regions(image)[0]
++
++    neutral = crop_region(image, region, size=128, neutral_background=True)
++    kept = crop_region(image, region, size=128, neutral_background=False)
++
++    assert tuple(neutral[2, 2]) == NEUTRAL_BACKGROUND_BGR
++    assert tuple(kept[2, 2]) == (255, 255, 255)
++    assert neutral[64, 64].tolist() == list(RED)  # isi tomat tidak berubah
++
++
++def test_crop_largest_tomato_returns_requested_size():
++    image = _tomato(_canvas(), (200, 150))
++
++    crop = crop_largest_tomato(image, size=96)
++
++    assert crop is not None and crop.shape == (96, 96, 3)
++
++
++def test_inference_can_relax_the_solidity_check_but_never_the_border_check():
++    merged = _canvas(500, 300)
++    _tomato(merged, (190, 150), (50, 50))
++    _tomato(merged, (290, 150), (50, 50))
++    at_border = _tomato(_canvas(), (20, 150))
++
++    assert crop_largest_tomato(merged) is None  # ketat: untuk membangun dataset
++    relaxed = crop_largest_tomato(merged, size=64, min_solidity=0.0)  # longgar: untuk alat
++    assert relaxed is not None and relaxed.shape == (64, 64, 3)
++    assert crop_largest_tomato(at_border, min_solidity=0.0) is None
+diff --git a/vision/crop.py b/vision/crop.py
+new file mode 100644
+index 0000000..804031d
+--- /dev/null
++++ b/vision/crop.py
+@@ -0,0 +1,144 @@
++"""Crop satu tomat dari foto: deteksi kandidat, uji bentuk, crop persegi, latar netral.
++
++Dipakai bersama oleh skrip persiapan dataset (ml/prepare_defect_v2.py) dan, nanti, saat
++inferensi, supaya data training dan data nyata diproses dengan cara yang identik.
++Ambang di sini adalah nilai awal dan BELUM DIKALIBRASI pada webcam alat.
++
++Asumsi gambar: BGR, sisi terpanjang sekitar 400-800 px (kernel morfologi bernilai piksel tetap).
++Tomat yang saling bersentuhan sengaja TIDAK dipisahkan (pemisahan watershed terbukti merusak
++bentuk); gabungannya ditolak lewat uji solidity pada is_clean_single_tomato.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++import cv2
++import numpy as np
++
++from vision.segmentation import _clean
++
++# Rata-rata ImageNet (RGB 124,116,104) dalam urutan BGR: terlihat "netral" bagi model ImageNet.
++NEUTRAL_BACKGROUND_BGR = (104, 116, 124)
++
++MAX_SIDE = 800  # sisi terpanjang gambar yang diproses (kernel morfologi bernilai piksel tetap)
++MIN_AREA_FRACTION = 0.01
++MAX_AREA_FRACTION = 0.90
++MIN_SOLIDITY = 0.92  # tomat tunggal ~0,95-0,99; dua tomat menyatu ~0,5-0,9 (sampel AgML)
++
++
++@dataclass(frozen=True)
++class TomatoRegion:
++    box: tuple[int, int, int, int]  # x, y, lebar, tinggi
++    mask: np.ndarray  # uint8 0/255, ukuran sama dengan gambar, kontur terisi penuh
++    area_fraction: float
++    solidity: float
++    touches_border: bool
++
++
++def pil_to_bgr(image, max_side: int = MAX_SIDE) -> np.ndarray:
++    """Gambar PIL -> BGR, diperkecil bila sisi terpanjangnya melebihi max_side."""
++    from PIL import Image
++
++    rgb = image.convert("RGB")
++    width, height = rgb.size
++    scale = min(1.0, max_side / max(width, height))
++    if scale < 1.0:
++        rgb = rgb.resize((round(width * scale), round(height * scale)), Image.LANCZOS)
++    return cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
++
++
++def _saturation_binary(image_bgr: np.ndarray) -> np.ndarray:
++    saturation = cv2.GaussianBlur(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)[..., 1], (5, 5), 0)
++    _, binary = cv2.threshold(saturation, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
++    return _clean(binary)
++
++
++def find_tomato_regions(
++    image_bgr: np.ndarray,
++    min_area_fraction: float = MIN_AREA_FRACTION,
++    max_area_fraction: float = MAX_AREA_FRACTION,
++) -> list[TomatoRegion]:
++    """Semua kandidat tomat (komponen terhubung hasil segmentasi saturasi), terbesar dulu."""
++    if image_bgr is None or image_bgr.size == 0:
++        raise ValueError("Gambar input kosong atau tidak valid")
++    height, width = image_bgr.shape[:2]
++    contours, _ = cv2.findContours(
++        _saturation_binary(image_bgr), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
++    )
++    regions: list[TomatoRegion] = []
++    for contour in contours:
++        area = cv2.contourArea(contour)
++        fraction = area / float(height * width)
++        if not (min_area_fraction <= fraction <= max_area_fraction):
++            continue
++        filled = np.zeros((height, width), dtype=np.uint8)
++        cv2.drawContours(filled, [contour], -1, 255, thickness=cv2.FILLED)
++        hull_area = cv2.contourArea(cv2.convexHull(contour))
++        x, y, w, h = cv2.boundingRect(contour)
++        regions.append(
++            TomatoRegion(
++                box=(x, y, w, h),
++                mask=filled,
++                area_fraction=float(fraction),
++                solidity=float(area / hull_area) if hull_area > 0 else 0.0,
++                touches_border=bool(x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1),
++            )
++        )
++    return sorted(regions, key=lambda region: region.area_fraction, reverse=True)
++
++
++def is_clean_single_tomato(region: TomatoRegion, min_solidity: float = MIN_SOLIDITY) -> bool:
++    """Utuh (tidak menyentuh tepi gambar) dan cembung (bukan gabungan beberapa tomat)."""
++    return (not region.touches_border) and region.solidity >= min_solidity
++
++
++def crop_region(
++    image_bgr: np.ndarray,
++    region: TomatoRegion,
++    padding: float = 0.12,
++    size: int = 256,
++    neutral_background: bool = True,
++) -> np.ndarray:
++    """Crop persegi (bentuk tomat tidak terdistorsi) berukuran size x size.
++
++    neutral_background=True: piksel di luar tomat (dengan tepi diperlebar sedikit agar cacat di
++    pinggir tidak terpotong) diganti warna netral, sehingga model tidak bisa memakai latar
++    (meja kayu, kertas, sabuk) sebagai petunjuk.
++    """
++    height, width = image_bgr.shape[:2]
++    x, y, w, h = region.box
++    side = int(round(max(w, h) * (1.0 + 2.0 * padding)))
++    side = max(8, min(side, height, width))
++    center_x, center_y = x + w // 2, y + h // 2
++    left = int(np.clip(center_x - side // 2, 0, width - side))
++    top = int(np.clip(center_y - side // 2, 0, height - side))
++
++    source = image_bgr
++    if neutral_background:
++        grow = max(2, int(0.025 * max(w, h)))
++        keep = cv2.dilate(
++            region.mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow + 1, 2 * grow + 1))
++        )
++        source = image_bgr.copy()
++        source[keep == 0] = NEUTRAL_BACKGROUND_BGR
++    crop = source[top : top + side, left : left + side]
++    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
++
++
++def crop_largest_tomato(
++    image_bgr: np.ndarray,
++    size: int = 256,
++    neutral_background: bool = True,
++    min_solidity: float = MIN_SOLIDITY,
++) -> np.ndarray | None:
++    """Untuk inferensi: crop tomat terbesar yang utuh (tidak menyentuh tepi), atau None.
++
++    Saat membangun dataset, min_solidity bawaan menjaga kemurnian (tomat menyatu ditolak). Di alat
++    nyata hanya ada satu tomat, jadi min_solidity=0.0 lebih tepat: tomat dengan kelopak besar
++    (solidity ~0,89 pada foto primer T003) tetap di-crop.
++    """
++    for region in find_tomato_regions(image_bgr):
++        if is_clean_single_tomato(region, min_solidity):
++            return crop_region(image_bgr, region, size=size, neutral_background=neutral_background)
++    return None
