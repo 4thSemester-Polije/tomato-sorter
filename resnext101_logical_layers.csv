@@ -1,0 +1,386 @@
+﻿No.,Stage,Bottleneck Block,Layer,Connected From,Operation / Details,Output Shape,Parameters,Trainable
+1,,,image,image,InputLayer,"(None, 224, 224, 3)",0,yes
+2,,,random_flip,image,RandomFlip,"(None, 224, 224, 3)",0,yes
+3,,,random_rotation,random_flip,RandomRotation,"(None, 224, 224, 3)",0,yes
+4,,,backbone/data,random_rotation,InputLayer,"(None, 224, 224, 3)",0,no
+5,,,backbone/bn_data,random_rotation,BatchNormalization (axis=ListWrapper([3])),"(None, 224, 224, 3)",9,no
+6,,,backbone/zero_padding2d,backbone/bn_data,"ZeroPadding2D (padding=((3, 3), (3, 3)))","(None, 230, 230, 3)",0,no
+7,,,backbone/conv0,backbone/zero_padding2d,"Conv2D (filters=64, kernel_size=(7, 7), strides=(2, 2), groups=1, padding=valid, activation=linear)","(None, 112, 112, 64)",9408,no
+8,,,backbone/bn0,backbone/conv0,BatchNormalization (axis=ListWrapper([3])),"(None, 112, 112, 64)",256,no
+9,,,backbone/relu0,backbone/bn0,Activation (activation=relu),"(None, 112, 112, 64)",0,no
+10,,,backbone/zero_padding2d_1,backbone/relu0,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 114, 114, 64)",0,no
+11,,,backbone/pooling0,backbone/zero_padding2d_1,"MaxPooling2D (strides=(2, 2), pool_size=(3, 3), padding=valid)","(None, 56, 56, 64)",0,no
+12,1,1,backbone/stage1_unit1_conv1,backbone/pooling0,"Conv2D (filters=128, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 128)",8192,no
+13,1,1,backbone/stage1_unit1_bn1,backbone/stage1_unit1_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+14,1,1,backbone/stage1_unit1_relu1,backbone/stage1_unit1_bn1,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+15,,,backbone/zero_padding2d_2,backbone/stage1_unit1_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 58, 58, 128)",0,no
+16,1,1,backbone/grouped_conv/concatenate,backbone/zero_padding2d_2,"GroupedConv2D (groups=32, filters=128, kernel_size=(3, 3), strides=(1, 1))","(None, 56, 56, 128)",4608,no
+17,1,1,backbone/stage1_unit1_bn2,grouped_conv/concatenate,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+18,1,1,backbone/stage1_unit1_relu2,backbone/stage1_unit1_bn2,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+19,1,1,backbone/stage1_unit1_conv3,backbone/stage1_unit1_relu2,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 256)",32768,no
+20,1,1,backbone/stage1_unit1_sc,backbone/pooling0,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 256)",16384,no
+21,1,1,backbone/stage1_unit1_bn3,backbone/stage1_unit1_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 256)",1024,no
+22,1,1,backbone/stage1_unit1_sc_bn,backbone/stage1_unit1_sc,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 256)",1024,no
+23,,,backbone/add,"backbone/stage1_unit1_bn3, backbone/stage1_unit1_sc_bn",Add,"(None, 56, 56, 256)",0,no
+24,1,1,backbone/stage1_unit1_relu,backbone/add,Activation (activation=relu),"(None, 56, 56, 256)",0,no
+25,1,2,backbone/stage1_unit2_conv1,backbone/stage1_unit1_relu,"Conv2D (filters=128, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 128)",32768,no
+26,1,2,backbone/stage1_unit2_bn1,backbone/stage1_unit2_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+27,1,2,backbone/stage1_unit2_relu1,backbone/stage1_unit2_bn1,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+28,,,backbone/zero_padding2d_3,backbone/stage1_unit2_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 58, 58, 128)",0,no
+29,1,2,backbone/grouped_conv/concatenate_1,backbone/zero_padding2d_3,"GroupedConv2D (groups=32, filters=128, kernel_size=(3, 3), strides=(1, 1))","(None, 56, 56, 128)",4608,no
+30,1,2,backbone/stage1_unit2_bn2,grouped_conv/concatenate_1,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+31,1,2,backbone/stage1_unit2_relu2,backbone/stage1_unit2_bn2,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+32,1,2,backbone/stage1_unit2_conv3,backbone/stage1_unit2_relu2,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 256)",32768,no
+33,1,2,backbone/stage1_unit2_bn3,backbone/stage1_unit2_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 256)",1024,no
+34,,,backbone/add_1,"backbone/stage1_unit2_bn3, backbone/stage1_unit1_relu",Add,"(None, 56, 56, 256)",0,no
+35,1,2,backbone/stage1_unit2_relu,backbone/add_1,Activation (activation=relu),"(None, 56, 56, 256)",0,no
+36,1,3,backbone/stage1_unit3_conv1,backbone/stage1_unit2_relu,"Conv2D (filters=128, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 128)",32768,no
+37,1,3,backbone/stage1_unit3_bn1,backbone/stage1_unit3_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+38,1,3,backbone/stage1_unit3_relu1,backbone/stage1_unit3_bn1,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+39,,,backbone/zero_padding2d_4,backbone/stage1_unit3_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 58, 58, 128)",0,no
+40,1,3,backbone/grouped_conv/concatenate_2,backbone/zero_padding2d_4,"GroupedConv2D (groups=32, filters=128, kernel_size=(3, 3), strides=(1, 1))","(None, 56, 56, 128)",4608,no
+41,1,3,backbone/stage1_unit3_bn2,grouped_conv/concatenate_2,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 128)",512,no
+42,1,3,backbone/stage1_unit3_relu2,backbone/stage1_unit3_bn2,Activation (activation=relu),"(None, 56, 56, 128)",0,no
+43,1,3,backbone/stage1_unit3_conv3,backbone/stage1_unit3_relu2,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 256)",32768,no
+44,1,3,backbone/stage1_unit3_bn3,backbone/stage1_unit3_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 256)",1024,no
+45,,,backbone/add_2,"backbone/stage1_unit3_bn3, backbone/stage1_unit2_relu",Add,"(None, 56, 56, 256)",0,no
+46,1,3,backbone/stage1_unit3_relu,backbone/add_2,Activation (activation=relu),"(None, 56, 56, 256)",0,no
+47,2,1,backbone/stage2_unit1_conv1,backbone/stage1_unit3_relu,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 56, 56, 256)",65536,no
+48,2,1,backbone/stage2_unit1_bn1,backbone/stage2_unit1_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 56, 56, 256)",1024,no
+49,2,1,backbone/stage2_unit1_relu1,backbone/stage2_unit1_bn1,Activation (activation=relu),"(None, 56, 56, 256)",0,no
+50,,,backbone/zero_padding2d_5,backbone/stage2_unit1_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 58, 58, 256)",0,no
+51,2,1,backbone/grouped_conv/concatenate_3,backbone/zero_padding2d_5,"GroupedConv2D (groups=32, filters=256, kernel_size=(3, 3), strides=(2, 2))","(None, 28, 28, 256)",18432,no
+52,2,1,backbone/stage2_unit1_bn2,grouped_conv/concatenate_3,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+53,2,1,backbone/stage2_unit1_relu2,backbone/stage2_unit1_bn2,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+54,2,1,backbone/stage2_unit1_conv3,backbone/stage2_unit1_relu2,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",131072,no
+55,2,1,backbone/stage2_unit1_sc,backbone/stage1_unit3_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(2, 2), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",131072,no
+56,2,1,backbone/stage2_unit1_bn3,backbone/stage2_unit1_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+57,2,1,backbone/stage2_unit1_sc_bn,backbone/stage2_unit1_sc,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+58,,,backbone/add_3,"backbone/stage2_unit1_bn3, backbone/stage2_unit1_sc_bn",Add,"(None, 28, 28, 512)",0,no
+59,2,1,backbone/stage2_unit1_relu,backbone/add_3,Activation (activation=relu),"(None, 28, 28, 512)",0,no
+60,2,2,backbone/stage2_unit2_conv1,backbone/stage2_unit1_relu,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 256)",131072,no
+61,2,2,backbone/stage2_unit2_bn1,backbone/stage2_unit2_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+62,2,2,backbone/stage2_unit2_relu1,backbone/stage2_unit2_bn1,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+63,,,backbone/zero_padding2d_6,backbone/stage2_unit2_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 30, 30, 256)",0,no
+64,2,2,backbone/grouped_conv/concatenate_4,backbone/zero_padding2d_6,"GroupedConv2D (groups=32, filters=256, kernel_size=(3, 3), strides=(1, 1))","(None, 28, 28, 256)",18432,no
+65,2,2,backbone/stage2_unit2_bn2,grouped_conv/concatenate_4,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+66,2,2,backbone/stage2_unit2_relu2,backbone/stage2_unit2_bn2,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+67,2,2,backbone/stage2_unit2_conv3,backbone/stage2_unit2_relu2,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",131072,no
+68,2,2,backbone/stage2_unit2_bn3,backbone/stage2_unit2_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+69,,,backbone/add_4,"backbone/stage2_unit2_bn3, backbone/stage2_unit1_relu",Add,"(None, 28, 28, 512)",0,no
+70,2,2,backbone/stage2_unit2_relu,backbone/add_4,Activation (activation=relu),"(None, 28, 28, 512)",0,no
+71,2,3,backbone/stage2_unit3_conv1,backbone/stage2_unit2_relu,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 256)",131072,no
+72,2,3,backbone/stage2_unit3_bn1,backbone/stage2_unit3_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+73,2,3,backbone/stage2_unit3_relu1,backbone/stage2_unit3_bn1,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+74,,,backbone/zero_padding2d_7,backbone/stage2_unit3_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 30, 30, 256)",0,no
+75,2,3,backbone/grouped_conv/concatenate_5,backbone/zero_padding2d_7,"GroupedConv2D (groups=32, filters=256, kernel_size=(3, 3), strides=(1, 1))","(None, 28, 28, 256)",18432,no
+76,2,3,backbone/stage2_unit3_bn2,grouped_conv/concatenate_5,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+77,2,3,backbone/stage2_unit3_relu2,backbone/stage2_unit3_bn2,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+78,2,3,backbone/stage2_unit3_conv3,backbone/stage2_unit3_relu2,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",131072,no
+79,2,3,backbone/stage2_unit3_bn3,backbone/stage2_unit3_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+80,,,backbone/add_5,"backbone/stage2_unit3_bn3, backbone/stage2_unit2_relu",Add,"(None, 28, 28, 512)",0,no
+81,2,3,backbone/stage2_unit3_relu,backbone/add_5,Activation (activation=relu),"(None, 28, 28, 512)",0,no
+82,2,4,backbone/stage2_unit4_conv1,backbone/stage2_unit3_relu,"Conv2D (filters=256, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 256)",131072,no
+83,2,4,backbone/stage2_unit4_bn1,backbone/stage2_unit4_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+84,2,4,backbone/stage2_unit4_relu1,backbone/stage2_unit4_bn1,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+85,,,backbone/zero_padding2d_8,backbone/stage2_unit4_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 30, 30, 256)",0,no
+86,2,4,backbone/grouped_conv/concatenate_6,backbone/zero_padding2d_8,"GroupedConv2D (groups=32, filters=256, kernel_size=(3, 3), strides=(1, 1))","(None, 28, 28, 256)",18432,no
+87,2,4,backbone/stage2_unit4_bn2,grouped_conv/concatenate_6,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 256)",1024,no
+88,2,4,backbone/stage2_unit4_relu2,backbone/stage2_unit4_bn2,Activation (activation=relu),"(None, 28, 28, 256)",0,no
+89,2,4,backbone/stage2_unit4_conv3,backbone/stage2_unit4_relu2,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",131072,no
+90,2,4,backbone/stage2_unit4_bn3,backbone/stage2_unit4_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+91,,,backbone/add_6,"backbone/stage2_unit4_bn3, backbone/stage2_unit3_relu",Add,"(None, 28, 28, 512)",0,no
+92,2,4,backbone/stage2_unit4_relu,backbone/add_6,Activation (activation=relu),"(None, 28, 28, 512)",0,no
+93,3,1,backbone/stage3_unit1_conv1,backbone/stage2_unit4_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 28, 28, 512)",262144,no
+94,3,1,backbone/stage3_unit1_bn1,backbone/stage3_unit1_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 28, 28, 512)",2048,no
+95,3,1,backbone/stage3_unit1_relu1,backbone/stage3_unit1_bn1,Activation (activation=relu),"(None, 28, 28, 512)",0,no
+96,,,backbone/zero_padding2d_9,backbone/stage3_unit1_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 30, 30, 512)",0,no
+97,3,1,backbone/grouped_conv/concatenate_7,backbone/zero_padding2d_9,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(2, 2))","(None, 14, 14, 512)",73728,no
+98,3,1,backbone/stage3_unit1_bn2,grouped_conv/concatenate_7,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+99,3,1,backbone/stage3_unit1_relu2,backbone/stage3_unit1_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+100,3,1,backbone/stage3_unit1_conv3,backbone/stage3_unit1_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+101,3,1,backbone/stage3_unit1_sc,backbone/stage2_unit4_relu,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(2, 2), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+102,3,1,backbone/stage3_unit1_bn3,backbone/stage3_unit1_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+103,3,1,backbone/stage3_unit1_sc_bn,backbone/stage3_unit1_sc,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+104,,,backbone/add_7,"backbone/stage3_unit1_bn3, backbone/stage3_unit1_sc_bn",Add,"(None, 14, 14, 1024)",0,no
+105,3,1,backbone/stage3_unit1_relu,backbone/add_7,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+106,3,2,backbone/stage3_unit2_conv1,backbone/stage3_unit1_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+107,3,2,backbone/stage3_unit2_bn1,backbone/stage3_unit2_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+108,3,2,backbone/stage3_unit2_relu1,backbone/stage3_unit2_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+109,,,backbone/zero_padding2d_10,backbone/stage3_unit2_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+110,3,2,backbone/grouped_conv/concatenate_8,backbone/zero_padding2d_10,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+111,3,2,backbone/stage3_unit2_bn2,grouped_conv/concatenate_8,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+112,3,2,backbone/stage3_unit2_relu2,backbone/stage3_unit2_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+113,3,2,backbone/stage3_unit2_conv3,backbone/stage3_unit2_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+114,3,2,backbone/stage3_unit2_bn3,backbone/stage3_unit2_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+115,,,backbone/add_8,"backbone/stage3_unit2_bn3, backbone/stage3_unit1_relu",Add,"(None, 14, 14, 1024)",0,no
+116,3,2,backbone/stage3_unit2_relu,backbone/add_8,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+117,3,3,backbone/stage3_unit3_conv1,backbone/stage3_unit2_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+118,3,3,backbone/stage3_unit3_bn1,backbone/stage3_unit3_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+119,3,3,backbone/stage3_unit3_relu1,backbone/stage3_unit3_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+120,,,backbone/zero_padding2d_11,backbone/stage3_unit3_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+121,3,3,backbone/grouped_conv/concatenate_9,backbone/zero_padding2d_11,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+122,3,3,backbone/stage3_unit3_bn2,grouped_conv/concatenate_9,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+123,3,3,backbone/stage3_unit3_relu2,backbone/stage3_unit3_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+124,3,3,backbone/stage3_unit3_conv3,backbone/stage3_unit3_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+125,3,3,backbone/stage3_unit3_bn3,backbone/stage3_unit3_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+126,,,backbone/add_9,"backbone/stage3_unit3_bn3, backbone/stage3_unit2_relu",Add,"(None, 14, 14, 1024)",0,no
+127,3,3,backbone/stage3_unit3_relu,backbone/add_9,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+128,3,4,backbone/stage3_unit4_conv1,backbone/stage3_unit3_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+129,3,4,backbone/stage3_unit4_bn1,backbone/stage3_unit4_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+130,3,4,backbone/stage3_unit4_relu1,backbone/stage3_unit4_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+131,,,backbone/zero_padding2d_12,backbone/stage3_unit4_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+132,3,4,backbone/grouped_conv/concatenate_10,backbone/zero_padding2d_12,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+133,3,4,backbone/stage3_unit4_bn2,grouped_conv/concatenate_10,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+134,3,4,backbone/stage3_unit4_relu2,backbone/stage3_unit4_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+135,3,4,backbone/stage3_unit4_conv3,backbone/stage3_unit4_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+136,3,4,backbone/stage3_unit4_bn3,backbone/stage3_unit4_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+137,,,backbone/add_10,"backbone/stage3_unit4_bn3, backbone/stage3_unit3_relu",Add,"(None, 14, 14, 1024)",0,no
+138,3,4,backbone/stage3_unit4_relu,backbone/add_10,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+139,3,5,backbone/stage3_unit5_conv1,backbone/stage3_unit4_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+140,3,5,backbone/stage3_unit5_bn1,backbone/stage3_unit5_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+141,3,5,backbone/stage3_unit5_relu1,backbone/stage3_unit5_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+142,,,backbone/zero_padding2d_13,backbone/stage3_unit5_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+143,3,5,backbone/grouped_conv/concatenate_11,backbone/zero_padding2d_13,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+144,3,5,backbone/stage3_unit5_bn2,grouped_conv/concatenate_11,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+145,3,5,backbone/stage3_unit5_relu2,backbone/stage3_unit5_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+146,3,5,backbone/stage3_unit5_conv3,backbone/stage3_unit5_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+147,3,5,backbone/stage3_unit5_bn3,backbone/stage3_unit5_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+148,,,backbone/add_11,"backbone/stage3_unit5_bn3, backbone/stage3_unit4_relu",Add,"(None, 14, 14, 1024)",0,no
+149,3,5,backbone/stage3_unit5_relu,backbone/add_11,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+150,3,6,backbone/stage3_unit6_conv1,backbone/stage3_unit5_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+151,3,6,backbone/stage3_unit6_bn1,backbone/stage3_unit6_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+152,3,6,backbone/stage3_unit6_relu1,backbone/stage3_unit6_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+153,,,backbone/zero_padding2d_14,backbone/stage3_unit6_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+154,3,6,backbone/grouped_conv/concatenate_12,backbone/zero_padding2d_14,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+155,3,6,backbone/stage3_unit6_bn2,grouped_conv/concatenate_12,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+156,3,6,backbone/stage3_unit6_relu2,backbone/stage3_unit6_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+157,3,6,backbone/stage3_unit6_conv3,backbone/stage3_unit6_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+158,3,6,backbone/stage3_unit6_bn3,backbone/stage3_unit6_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+159,,,backbone/add_12,"backbone/stage3_unit6_bn3, backbone/stage3_unit5_relu",Add,"(None, 14, 14, 1024)",0,no
+160,3,6,backbone/stage3_unit6_relu,backbone/add_12,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+161,3,7,backbone/stage3_unit7_conv1,backbone/stage3_unit6_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+162,3,7,backbone/stage3_unit7_bn1,backbone/stage3_unit7_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+163,3,7,backbone/stage3_unit7_relu1,backbone/stage3_unit7_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+164,,,backbone/zero_padding2d_15,backbone/stage3_unit7_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+165,3,7,backbone/grouped_conv/concatenate_13,backbone/zero_padding2d_15,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+166,3,7,backbone/stage3_unit7_bn2,grouped_conv/concatenate_13,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+167,3,7,backbone/stage3_unit7_relu2,backbone/stage3_unit7_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+168,3,7,backbone/stage3_unit7_conv3,backbone/stage3_unit7_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+169,3,7,backbone/stage3_unit7_bn3,backbone/stage3_unit7_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+170,,,backbone/add_13,"backbone/stage3_unit7_bn3, backbone/stage3_unit6_relu",Add,"(None, 14, 14, 1024)",0,no
+171,3,7,backbone/stage3_unit7_relu,backbone/add_13,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+172,3,8,backbone/stage3_unit8_conv1,backbone/stage3_unit7_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+173,3,8,backbone/stage3_unit8_bn1,backbone/stage3_unit8_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+174,3,8,backbone/stage3_unit8_relu1,backbone/stage3_unit8_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+175,,,backbone/zero_padding2d_16,backbone/stage3_unit8_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+176,3,8,backbone/grouped_conv/concatenate_14,backbone/zero_padding2d_16,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+177,3,8,backbone/stage3_unit8_bn2,grouped_conv/concatenate_14,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+178,3,8,backbone/stage3_unit8_relu2,backbone/stage3_unit8_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+179,3,8,backbone/stage3_unit8_conv3,backbone/stage3_unit8_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+180,3,8,backbone/stage3_unit8_bn3,backbone/stage3_unit8_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+181,,,backbone/add_14,"backbone/stage3_unit8_bn3, backbone/stage3_unit7_relu",Add,"(None, 14, 14, 1024)",0,no
+182,3,8,backbone/stage3_unit8_relu,backbone/add_14,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+183,3,9,backbone/stage3_unit9_conv1,backbone/stage3_unit8_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+184,3,9,backbone/stage3_unit9_bn1,backbone/stage3_unit9_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+185,3,9,backbone/stage3_unit9_relu1,backbone/stage3_unit9_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+186,,,backbone/zero_padding2d_17,backbone/stage3_unit9_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+187,3,9,backbone/grouped_conv/concatenate_15,backbone/zero_padding2d_17,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+188,3,9,backbone/stage3_unit9_bn2,grouped_conv/concatenate_15,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+189,3,9,backbone/stage3_unit9_relu2,backbone/stage3_unit9_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+190,3,9,backbone/stage3_unit9_conv3,backbone/stage3_unit9_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+191,3,9,backbone/stage3_unit9_bn3,backbone/stage3_unit9_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+192,,,backbone/add_15,"backbone/stage3_unit9_bn3, backbone/stage3_unit8_relu",Add,"(None, 14, 14, 1024)",0,no
+193,3,9,backbone/stage3_unit9_relu,backbone/add_15,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+194,3,10,backbone/stage3_unit10_conv1,backbone/stage3_unit9_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+195,3,10,backbone/stage3_unit10_bn1,backbone/stage3_unit10_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+196,3,10,backbone/stage3_unit10_relu1,backbone/stage3_unit10_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+197,,,backbone/zero_padding2d_18,backbone/stage3_unit10_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+198,3,10,backbone/grouped_conv/concatenate_16,backbone/zero_padding2d_18,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+199,3,10,backbone/stage3_unit10_bn2,grouped_conv/concatenate_16,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+200,3,10,backbone/stage3_unit10_relu2,backbone/stage3_unit10_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+201,3,10,backbone/stage3_unit10_conv3,backbone/stage3_unit10_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+202,3,10,backbone/stage3_unit10_bn3,backbone/stage3_unit10_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+203,,,backbone/add_16,"backbone/stage3_unit10_bn3, backbone/stage3_unit9_relu",Add,"(None, 14, 14, 1024)",0,no
+204,3,10,backbone/stage3_unit10_relu,backbone/add_16,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+205,3,11,backbone/stage3_unit11_conv1,backbone/stage3_unit10_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+206,3,11,backbone/stage3_unit11_bn1,backbone/stage3_unit11_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+207,3,11,backbone/stage3_unit11_relu1,backbone/stage3_unit11_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+208,,,backbone/zero_padding2d_19,backbone/stage3_unit11_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+209,3,11,backbone/grouped_conv/concatenate_17,backbone/zero_padding2d_19,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+210,3,11,backbone/stage3_unit11_bn2,grouped_conv/concatenate_17,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+211,3,11,backbone/stage3_unit11_relu2,backbone/stage3_unit11_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+212,3,11,backbone/stage3_unit11_conv3,backbone/stage3_unit11_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+213,3,11,backbone/stage3_unit11_bn3,backbone/stage3_unit11_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+214,,,backbone/add_17,"backbone/stage3_unit11_bn3, backbone/stage3_unit10_relu",Add,"(None, 14, 14, 1024)",0,no
+215,3,11,backbone/stage3_unit11_relu,backbone/add_17,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+216,3,12,backbone/stage3_unit12_conv1,backbone/stage3_unit11_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+217,3,12,backbone/stage3_unit12_bn1,backbone/stage3_unit12_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+218,3,12,backbone/stage3_unit12_relu1,backbone/stage3_unit12_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+219,,,backbone/zero_padding2d_20,backbone/stage3_unit12_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+220,3,12,backbone/grouped_conv/concatenate_18,backbone/zero_padding2d_20,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+221,3,12,backbone/stage3_unit12_bn2,grouped_conv/concatenate_18,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+222,3,12,backbone/stage3_unit12_relu2,backbone/stage3_unit12_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+223,3,12,backbone/stage3_unit12_conv3,backbone/stage3_unit12_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+224,3,12,backbone/stage3_unit12_bn3,backbone/stage3_unit12_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+225,,,backbone/add_18,"backbone/stage3_unit12_bn3, backbone/stage3_unit11_relu",Add,"(None, 14, 14, 1024)",0,no
+226,3,12,backbone/stage3_unit12_relu,backbone/add_18,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+227,3,13,backbone/stage3_unit13_conv1,backbone/stage3_unit12_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+228,3,13,backbone/stage3_unit13_bn1,backbone/stage3_unit13_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+229,3,13,backbone/stage3_unit13_relu1,backbone/stage3_unit13_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+230,,,backbone/zero_padding2d_21,backbone/stage3_unit13_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+231,3,13,backbone/grouped_conv/concatenate_19,backbone/zero_padding2d_21,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+232,3,13,backbone/stage3_unit13_bn2,grouped_conv/concatenate_19,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+233,3,13,backbone/stage3_unit13_relu2,backbone/stage3_unit13_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+234,3,13,backbone/stage3_unit13_conv3,backbone/stage3_unit13_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+235,3,13,backbone/stage3_unit13_bn3,backbone/stage3_unit13_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+236,,,backbone/add_19,"backbone/stage3_unit13_bn3, backbone/stage3_unit12_relu",Add,"(None, 14, 14, 1024)",0,no
+237,3,13,backbone/stage3_unit13_relu,backbone/add_19,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+238,3,14,backbone/stage3_unit14_conv1,backbone/stage3_unit13_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+239,3,14,backbone/stage3_unit14_bn1,backbone/stage3_unit14_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+240,3,14,backbone/stage3_unit14_relu1,backbone/stage3_unit14_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+241,,,backbone/zero_padding2d_22,backbone/stage3_unit14_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+242,3,14,backbone/grouped_conv/concatenate_20,backbone/zero_padding2d_22,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+243,3,14,backbone/stage3_unit14_bn2,grouped_conv/concatenate_20,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+244,3,14,backbone/stage3_unit14_relu2,backbone/stage3_unit14_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+245,3,14,backbone/stage3_unit14_conv3,backbone/stage3_unit14_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+246,3,14,backbone/stage3_unit14_bn3,backbone/stage3_unit14_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+247,,,backbone/add_20,"backbone/stage3_unit14_bn3, backbone/stage3_unit13_relu",Add,"(None, 14, 14, 1024)",0,no
+248,3,14,backbone/stage3_unit14_relu,backbone/add_20,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+249,3,15,backbone/stage3_unit15_conv1,backbone/stage3_unit14_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+250,3,15,backbone/stage3_unit15_bn1,backbone/stage3_unit15_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+251,3,15,backbone/stage3_unit15_relu1,backbone/stage3_unit15_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+252,,,backbone/zero_padding2d_23,backbone/stage3_unit15_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+253,3,15,backbone/grouped_conv/concatenate_21,backbone/zero_padding2d_23,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+254,3,15,backbone/stage3_unit15_bn2,grouped_conv/concatenate_21,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+255,3,15,backbone/stage3_unit15_relu2,backbone/stage3_unit15_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+256,3,15,backbone/stage3_unit15_conv3,backbone/stage3_unit15_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+257,3,15,backbone/stage3_unit15_bn3,backbone/stage3_unit15_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+258,,,backbone/add_21,"backbone/stage3_unit15_bn3, backbone/stage3_unit14_relu",Add,"(None, 14, 14, 1024)",0,no
+259,3,15,backbone/stage3_unit15_relu,backbone/add_21,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+260,3,16,backbone/stage3_unit16_conv1,backbone/stage3_unit15_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+261,3,16,backbone/stage3_unit16_bn1,backbone/stage3_unit16_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+262,3,16,backbone/stage3_unit16_relu1,backbone/stage3_unit16_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+263,,,backbone/zero_padding2d_24,backbone/stage3_unit16_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+264,3,16,backbone/grouped_conv/concatenate_22,backbone/zero_padding2d_24,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+265,3,16,backbone/stage3_unit16_bn2,grouped_conv/concatenate_22,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+266,3,16,backbone/stage3_unit16_relu2,backbone/stage3_unit16_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+267,3,16,backbone/stage3_unit16_conv3,backbone/stage3_unit16_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+268,3,16,backbone/stage3_unit16_bn3,backbone/stage3_unit16_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+269,,,backbone/add_22,"backbone/stage3_unit16_bn3, backbone/stage3_unit15_relu",Add,"(None, 14, 14, 1024)",0,no
+270,3,16,backbone/stage3_unit16_relu,backbone/add_22,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+271,3,17,backbone/stage3_unit17_conv1,backbone/stage3_unit16_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+272,3,17,backbone/stage3_unit17_bn1,backbone/stage3_unit17_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+273,3,17,backbone/stage3_unit17_relu1,backbone/stage3_unit17_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+274,,,backbone/zero_padding2d_25,backbone/stage3_unit17_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+275,3,17,backbone/grouped_conv/concatenate_23,backbone/zero_padding2d_25,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+276,3,17,backbone/stage3_unit17_bn2,grouped_conv/concatenate_23,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+277,3,17,backbone/stage3_unit17_relu2,backbone/stage3_unit17_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+278,3,17,backbone/stage3_unit17_conv3,backbone/stage3_unit17_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+279,3,17,backbone/stage3_unit17_bn3,backbone/stage3_unit17_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+280,,,backbone/add_23,"backbone/stage3_unit17_bn3, backbone/stage3_unit16_relu",Add,"(None, 14, 14, 1024)",0,no
+281,3,17,backbone/stage3_unit17_relu,backbone/add_23,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+282,3,18,backbone/stage3_unit18_conv1,backbone/stage3_unit17_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+283,3,18,backbone/stage3_unit18_bn1,backbone/stage3_unit18_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+284,3,18,backbone/stage3_unit18_relu1,backbone/stage3_unit18_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+285,,,backbone/zero_padding2d_26,backbone/stage3_unit18_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+286,3,18,backbone/grouped_conv/concatenate_24,backbone/zero_padding2d_26,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+287,3,18,backbone/stage3_unit18_bn2,grouped_conv/concatenate_24,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+288,3,18,backbone/stage3_unit18_relu2,backbone/stage3_unit18_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+289,3,18,backbone/stage3_unit18_conv3,backbone/stage3_unit18_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+290,3,18,backbone/stage3_unit18_bn3,backbone/stage3_unit18_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+291,,,backbone/add_24,"backbone/stage3_unit18_bn3, backbone/stage3_unit17_relu",Add,"(None, 14, 14, 1024)",0,no
+292,3,18,backbone/stage3_unit18_relu,backbone/add_24,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+293,3,19,backbone/stage3_unit19_conv1,backbone/stage3_unit18_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+294,3,19,backbone/stage3_unit19_bn1,backbone/stage3_unit19_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+295,3,19,backbone/stage3_unit19_relu1,backbone/stage3_unit19_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+296,,,backbone/zero_padding2d_27,backbone/stage3_unit19_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+297,3,19,backbone/grouped_conv/concatenate_25,backbone/zero_padding2d_27,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+298,3,19,backbone/stage3_unit19_bn2,grouped_conv/concatenate_25,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+299,3,19,backbone/stage3_unit19_relu2,backbone/stage3_unit19_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+300,3,19,backbone/stage3_unit19_conv3,backbone/stage3_unit19_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+301,3,19,backbone/stage3_unit19_bn3,backbone/stage3_unit19_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+302,,,backbone/add_25,"backbone/stage3_unit19_bn3, backbone/stage3_unit18_relu",Add,"(None, 14, 14, 1024)",0,no
+303,3,19,backbone/stage3_unit19_relu,backbone/add_25,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+304,3,20,backbone/stage3_unit20_conv1,backbone/stage3_unit19_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+305,3,20,backbone/stage3_unit20_bn1,backbone/stage3_unit20_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+306,3,20,backbone/stage3_unit20_relu1,backbone/stage3_unit20_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+307,,,backbone/zero_padding2d_28,backbone/stage3_unit20_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+308,3,20,backbone/grouped_conv/concatenate_26,backbone/zero_padding2d_28,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+309,3,20,backbone/stage3_unit20_bn2,grouped_conv/concatenate_26,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+310,3,20,backbone/stage3_unit20_relu2,backbone/stage3_unit20_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+311,3,20,backbone/stage3_unit20_conv3,backbone/stage3_unit20_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+312,3,20,backbone/stage3_unit20_bn3,backbone/stage3_unit20_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+313,,,backbone/add_26,"backbone/stage3_unit20_bn3, backbone/stage3_unit19_relu",Add,"(None, 14, 14, 1024)",0,no
+314,3,20,backbone/stage3_unit20_relu,backbone/add_26,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+315,3,21,backbone/stage3_unit21_conv1,backbone/stage3_unit20_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+316,3,21,backbone/stage3_unit21_bn1,backbone/stage3_unit21_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+317,3,21,backbone/stage3_unit21_relu1,backbone/stage3_unit21_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+318,,,backbone/zero_padding2d_29,backbone/stage3_unit21_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+319,3,21,backbone/grouped_conv/concatenate_27,backbone/zero_padding2d_29,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+320,3,21,backbone/stage3_unit21_bn2,grouped_conv/concatenate_27,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+321,3,21,backbone/stage3_unit21_relu2,backbone/stage3_unit21_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+322,3,21,backbone/stage3_unit21_conv3,backbone/stage3_unit21_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+323,3,21,backbone/stage3_unit21_bn3,backbone/stage3_unit21_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+324,,,backbone/add_27,"backbone/stage3_unit21_bn3, backbone/stage3_unit20_relu",Add,"(None, 14, 14, 1024)",0,no
+325,3,21,backbone/stage3_unit21_relu,backbone/add_27,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+326,3,22,backbone/stage3_unit22_conv1,backbone/stage3_unit21_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+327,3,22,backbone/stage3_unit22_bn1,backbone/stage3_unit22_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+328,3,22,backbone/stage3_unit22_relu1,backbone/stage3_unit22_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+329,,,backbone/zero_padding2d_30,backbone/stage3_unit22_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+330,3,22,backbone/grouped_conv/concatenate_28,backbone/zero_padding2d_30,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+331,3,22,backbone/stage3_unit22_bn2,grouped_conv/concatenate_28,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+332,3,22,backbone/stage3_unit22_relu2,backbone/stage3_unit22_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+333,3,22,backbone/stage3_unit22_conv3,backbone/stage3_unit22_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+334,3,22,backbone/stage3_unit22_bn3,backbone/stage3_unit22_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+335,,,backbone/add_28,"backbone/stage3_unit22_bn3, backbone/stage3_unit21_relu",Add,"(None, 14, 14, 1024)",0,no
+336,3,22,backbone/stage3_unit22_relu,backbone/add_28,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+337,3,23,backbone/stage3_unit23_conv1,backbone/stage3_unit22_relu,"Conv2D (filters=512, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 512)",524288,no
+338,3,23,backbone/stage3_unit23_bn1,backbone/stage3_unit23_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+339,3,23,backbone/stage3_unit23_relu1,backbone/stage3_unit23_bn1,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+340,,,backbone/zero_padding2d_31,backbone/stage3_unit23_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 512)",0,no
+341,3,23,backbone/grouped_conv/concatenate_29,backbone/zero_padding2d_31,"GroupedConv2D (groups=32, filters=512, kernel_size=(3, 3), strides=(1, 1))","(None, 14, 14, 512)",73728,no
+342,3,23,backbone/stage3_unit23_bn2,grouped_conv/concatenate_29,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 512)",2048,no
+343,3,23,backbone/stage3_unit23_relu2,backbone/stage3_unit23_bn2,Activation (activation=relu),"(None, 14, 14, 512)",0,no
+344,3,23,backbone/stage3_unit23_conv3,backbone/stage3_unit23_relu2,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",524288,no
+345,3,23,backbone/stage3_unit23_bn3,backbone/stage3_unit23_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+346,,,backbone/add_29,"backbone/stage3_unit23_bn3, backbone/stage3_unit22_relu",Add,"(None, 14, 14, 1024)",0,no
+347,3,23,backbone/stage3_unit23_relu,backbone/add_29,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+348,4,1,backbone/stage4_unit1_conv1,backbone/stage3_unit23_relu,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 14, 14, 1024)",1048576,no
+349,4,1,backbone/stage4_unit1_bn1,backbone/stage4_unit1_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 14, 14, 1024)",4096,no
+350,4,1,backbone/stage4_unit1_relu1,backbone/stage4_unit1_bn1,Activation (activation=relu),"(None, 14, 14, 1024)",0,no
+351,,,backbone/zero_padding2d_32,backbone/stage4_unit1_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 16, 16, 1024)",0,no
+352,4,1,backbone/grouped_conv/concatenate_30,backbone/zero_padding2d_32,"GroupedConv2D (groups=32, filters=1024, kernel_size=(3, 3), strides=(2, 2))","(None, 7, 7, 1024)",294912,no
+353,4,1,backbone/stage4_unit1_bn2,grouped_conv/concatenate_30,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 1024)",4096,no
+354,4,1,backbone/stage4_unit1_relu2,backbone/stage4_unit1_bn2,Activation (activation=relu),"(None, 7, 7, 1024)",0,no
+355,4,1,backbone/stage4_unit1_conv3,backbone/stage4_unit1_relu2,"Conv2D (filters=2048, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 7, 7, 2048)",2097152,no
+356,4,1,backbone/stage4_unit1_sc,backbone/stage3_unit23_relu,"Conv2D (filters=2048, kernel_size=(1, 1), strides=(2, 2), groups=1, padding=valid, activation=linear)","(None, 7, 7, 2048)",2097152,no
+357,4,1,backbone/stage4_unit1_bn3,backbone/stage4_unit1_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 2048)",8192,no
+358,4,1,backbone/stage4_unit1_sc_bn,backbone/stage4_unit1_sc,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 2048)",8192,no
+359,,,backbone/add_30,"backbone/stage4_unit1_bn3, backbone/stage4_unit1_sc_bn",Add,"(None, 7, 7, 2048)",0,no
+360,4,1,backbone/stage4_unit1_relu,backbone/add_30,Activation (activation=relu),"(None, 7, 7, 2048)",0,no
+361,4,2,backbone/stage4_unit2_conv1,backbone/stage4_unit1_relu,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 7, 7, 1024)",2097152,no
+362,4,2,backbone/stage4_unit2_bn1,backbone/stage4_unit2_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 1024)",4096,no
+363,4,2,backbone/stage4_unit2_relu1,backbone/stage4_unit2_bn1,Activation (activation=relu),"(None, 7, 7, 1024)",0,no
+364,,,backbone/zero_padding2d_33,backbone/stage4_unit2_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 9, 9, 1024)",0,no
+365,4,2,backbone/grouped_conv/concatenate_31,backbone/zero_padding2d_33,"GroupedConv2D (groups=32, filters=1024, kernel_size=(3, 3), strides=(1, 1))","(None, 7, 7, 1024)",294912,no
+366,4,2,backbone/stage4_unit2_bn2,grouped_conv/concatenate_31,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 1024)",4096,no
+367,4,2,backbone/stage4_unit2_relu2,backbone/stage4_unit2_bn2,Activation (activation=relu),"(None, 7, 7, 1024)",0,no
+368,4,2,backbone/stage4_unit2_conv3,backbone/stage4_unit2_relu2,"Conv2D (filters=2048, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 7, 7, 2048)",2097152,no
+369,4,2,backbone/stage4_unit2_bn3,backbone/stage4_unit2_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 2048)",8192,no
+370,,,backbone/add_31,"backbone/stage4_unit2_bn3, backbone/stage4_unit1_relu",Add,"(None, 7, 7, 2048)",0,no
+371,4,2,backbone/stage4_unit2_relu,backbone/add_31,Activation (activation=relu),"(None, 7, 7, 2048)",0,no
+372,4,3,backbone/stage4_unit3_conv1,backbone/stage4_unit2_relu,"Conv2D (filters=1024, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 7, 7, 1024)",2097152,no
+373,4,3,backbone/stage4_unit3_bn1,backbone/stage4_unit3_conv1,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 1024)",4096,no
+374,4,3,backbone/stage4_unit3_relu1,backbone/stage4_unit3_bn1,Activation (activation=relu),"(None, 7, 7, 1024)",0,no
+375,,,backbone/zero_padding2d_34,backbone/stage4_unit3_relu1,"ZeroPadding2D (padding=((1, 1), (1, 1)))","(None, 9, 9, 1024)",0,no
+376,4,3,backbone/grouped_conv/concatenate_32,backbone/zero_padding2d_34,"GroupedConv2D (groups=32, filters=1024, kernel_size=(3, 3), strides=(1, 1))","(None, 7, 7, 1024)",294912,no
+377,4,3,backbone/stage4_unit3_bn2,grouped_conv/concatenate_32,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 1024)",4096,no
+378,4,3,backbone/stage4_unit3_relu2,backbone/stage4_unit3_bn2,Activation (activation=relu),"(None, 7, 7, 1024)",0,no
+379,4,3,backbone/stage4_unit3_conv3,backbone/stage4_unit3_relu2,"Conv2D (filters=2048, kernel_size=(1, 1), strides=(1, 1), groups=1, padding=valid, activation=linear)","(None, 7, 7, 2048)",2097152,no
+380,4,3,backbone/stage4_unit3_bn3,backbone/stage4_unit3_conv3,BatchNormalization (axis=ListWrapper([3])),"(None, 7, 7, 2048)",8192,no
+381,,,backbone/add_32,"backbone/stage4_unit3_bn3, backbone/stage4_unit2_relu",Add,"(None, 7, 7, 2048)",0,no
+382,4,3,backbone/stage4_unit3_relu,backbone/add_32,Activation (activation=relu),"(None, 7, 7, 2048)",0,no
+383,,,average_pool,backbone/stage4_unit3_relu,GlobalAveragePooling2D,"(None, 2048)",0,yes
+384,,,dropout,average_pool,Dropout (rate=0.3),"(None, 2048)",0,yes
+385,,,probabilities,dropout,"Dense (activation=softmax, units=3)","(None, 3)",6147,yes

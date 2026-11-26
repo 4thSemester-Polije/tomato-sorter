@@ -36,7 +36,12 @@ def analyze(frame, background, mm_per_pixel, predict: Callable[[bytes], dict]) -
     pcv = extract_pcv_features(frame)
     started = time.perf_counter()
     # Kirim citra hasil gabungan PCV (Crop 1:1 + LAB Tekstur CLAHE) ke model ResNeXt
-    result = predict(encode_jpeg(pcv["img_enhanced_bgr"]))
+    enhanced = encode_jpeg(pcv["img_enhanced_bgr"])
+    if getattr(predict, "accepts_frame", False):
+        # Model cacat v2 dilatih pada crop frame mentah (bukan gambar PCV), jadi frame mentah ikut dikirim.
+        result = predict(enhanced, frame_jpeg=encode_jpeg(frame))
+    else:
+        result = predict(enhanced)
     return {"valid": True, "mask": mask, "features": features, "pcv": pcv, "result": result,
             "latency_ms": round((time.perf_counter() - started) * 1000, 1)}
 
@@ -58,6 +63,57 @@ def build_tomato_payload(outcome: dict[str, Any], image_path: str | None) -> dic
     return payload
 
 
+LOG_COLUMNS = (
+    "no", "timestamp_ms", "raw_file", "grade", "ripeness_class", "ripeness_confidence",
+    "defect_class", "defect_status", "defect_p_reject", "defect_threshold", "defect_input",
+    "true_ripeness", "true_defect_level", "notes",
+)
+
+
+def result_row(no: int, timestamp_ms: int, raw_file: str, outcome: dict[str, Any]) -> dict[str, Any]:
+    """Satu baris log uji webcam. Kolom true_* dan notes dikosongkan untuk diisi manual setelah uji."""
+    row: dict[str, Any] = {column: "" for column in LOG_COLUMNS}
+    row.update(no=no, timestamp_ms=timestamp_ms, raw_file=raw_file, defect_status="tomat_tidak_valid")
+    result = outcome.get("result")
+    if not result:
+        return row
+    raw = result.get("defect_raw") or result.get("defect") or {}
+    p_reject = raw.get("p_reject")
+    if p_reject is None:  # model cacat lama (foto penuh) tidak melaporkan p_reject langsung
+        p_reject = (raw.get("probabilities") or {}).get("reject")
+    row.update(
+        grade=result.get("grade", ""),
+        ripeness_class=(result.get("ripeness") or {}).get("class", ""),
+        ripeness_confidence=round((result.get("ripeness") or {}).get("confidence", 0.0), 4),
+        defect_class=(result.get("defect") or {}).get("class", ""),
+        defect_status="dinilai" if raw.get("level") is not None else raw.get("reason", "tidak_dinilai"),
+        defect_p_reject="" if p_reject is None else round(float(p_reject), 6),
+        defect_threshold="" if raw.get("threshold") is None else raw["threshold"],
+        defect_input=raw.get("input", ""),
+    )
+    return row
+
+
+def next_row_number(csv_path: Path) -> int:
+    """Nomor urut berikutnya (melanjutkan bila file sudah ada), untuk menandai tomat fisik satu per satu."""
+    if not csv_path.is_file():
+        return 1
+    with csv_path.open(newline="", encoding="utf-8") as file:
+        return max(0, sum(1 for _ in file) - 1) + 1
+
+
+def append_result_row(csv_path: Path, row: dict[str, Any]) -> None:
+    import csv
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not csv_path.is_file() or csv_path.stat().st_size == 0
+    with csv_path.open("a", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=LOG_COLUMNS, lineterminator="\n")
+        if new_file:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def _relative(path: Path) -> str:
     try:
         return path.relative_to(ROOT).as_posix()
@@ -77,6 +133,13 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(prog="python -m tools.camera_predict", description=__doc__.splitlines()[0])
     ap.add_argument("--no-dashboard", action="store_true", help="jangan kirim hasil ke dashboard")
+    ap.add_argument(
+        "--log-dir",
+        type=Path,
+        default=None,
+        help="simpan frame mentah tiap foto (raw_<waktu>.jpg) dan catat hasilnya di <log-dir>/results.csv "
+        "untuk uji webcam model cacat (isi kolom true_* setelah uji; evaluasi: python -m tools.eval_webcam_defect)",
+    )
     args = ap.parse_args()
 
     load_env()
@@ -107,6 +170,7 @@ def main() -> None:
     camera = Camera(cam["index"], cam["width"], cam["height"], cam["flush_frames"])
     debug_dir = Path(cfg["paths"]["debug_dir"])
     debug_dir = debug_dir if debug_dir.is_absolute() else ROOT / debug_dir
+    log_dir = args.log_dir if args.log_dir is None or args.log_dir.is_absolute() else ROOT / args.log_dir
     frame_interval = 1.0 / max(1, cfg["dashboard"]["stream_fps"])
     last_frame_sent = last_beat = 0.0
     last_text = "SPASI = klasifikasi | q = keluar"
@@ -141,6 +205,23 @@ def main() -> None:
                 continue
             last_text = format_summary(outcome)
             print(last_text)
+            capture_ts = int(time.time() * 1000)
+            if outcome["valid"]:
+                defect = outcome["result"].get("defect_raw") or outcome["result"].get("defect") or {}
+                if defect.get("p_reject") is not None:
+                    print(
+                        f"  cacat: p_reject {defect['p_reject']:.3f} (ambang {defect.get('threshold')}, "
+                        f"masukan {defect.get('input')})"
+                    )
+                elif defect.get("reason"):
+                    print(f"  cacat: tidak dinilai ({defect['reason']})")
+            if log_dir is not None:
+                csv_path = log_dir / "results.csv"
+                raw_name = f"raw_{capture_ts}.jpg"
+                write_jpeg_atomic(log_dir / raw_name, frame)
+                row = result_row(next_row_number(csv_path), capture_ts, raw_name, outcome)
+                append_result_row(csv_path, row)
+                print(f"  log uji: tomat no. {row['no']} -> {_relative(csv_path)}")
             image_path = None
             if outcome["valid"]:
                 ts = int(time.time() * 1000)

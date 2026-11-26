@@ -1,0 +1,1443 @@
+diff --git a/controller/ml_client.py b/controller/ml_client.py
+index 9bd70d3..873b3dd 100644
+--- a/controller/ml_client.py
++++ b/controller/ml_client.py
+@@ -7,21 +7,31 @@ from urllib import request
+ from urllib.parse import urlencode
+ 
+ 
+-def build_multipart(jpeg: bytes, filename: str = "frame.jpg") -> tuple[bytes, str]:
++def build_multipart(
++    jpeg: bytes, filename: str = "frame.jpg", frame_jpeg: bytes | None = None
++) -> tuple[bytes, str]:
++    """Badan multipart: `file` (gambar untuk model kematangan) dan, opsional, `frame` (frame mentah untuk model cacat)."""
+     boundary = uuid.uuid4().hex
+-    head = (
+-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+-        "Content-Type: image/jpeg\r\n\r\n"
+-    ).encode()
+-    return head + jpeg + f"\r\n--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
++
++    def part(name: str, upload_name: str, data: bytes) -> bytes:
++        head = (
++            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{upload_name}\"\r\n"
++            "Content-Type: image/jpeg\r\n\r\n"
++        ).encode()
++        return head + data + b"\r\n"
++
++    body = part("file", filename, jpeg)
++    if frame_jpeg is not None:
++        body += part("frame", "raw.jpg", frame_jpeg)
++    return body + f"--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
+ 
+ 
+ def make_image_predictor(api_url: str, architecture: str | None = None, timeout_s: float = 10.0):
+     """Hasilkan fungsi f(jpeg_bytes) -> dict respons /predict. Melempar OSError/ValueError bila gagal."""
+     url = api_url.rstrip("/") + "/predict" + ("?" + urlencode({"architecture": architecture}) if architecture else "")
+ 
+-    def predict(jpeg: bytes) -> dict:
+-        body, ctype = build_multipart(jpeg)
++    def predict(jpeg: bytes, frame_jpeg: bytes | None = None) -> dict:
++        body, ctype = build_multipart(jpeg, frame_jpeg=frame_jpeg)
+         req = request.Request(url, data=body, headers={"Content-Type": ctype}, method="POST")
+         with request.urlopen(req, timeout=timeout_s) as resp:  # URLError/HTTPError adalah subclass OSError
+             result = json.loads(resp.read().decode("utf-8"))
+@@ -29,6 +39,7 @@ def make_image_predictor(api_url: str, architecture: str | None = None, timeout_
+             raise ValueError(f"respons ML tidak valid: {str(result)[:120]}")
+         return result
+ 
++    predict.accepts_frame = True  # pemanggil boleh menyertakan frame_jpeg; predictor lain (mis. palsu di tes) tidak
+     return predict
+ 
+ 
+@@ -47,4 +58,11 @@ def check_api(api_url: str, architecture: str | None = None, timeout_s: float =
+     if info.get("status") != "ready":
+         missing = ", ".join(info.get("missing_files") or []) or "tidak diketahui"
+         return False, f"Model {chosen} belum siap di API (file hilang: {missing}). Salin file model ke folder models/."
+-    return True, f"API model siap ({chosen})"
++    message = f"API model siap ({chosen})"
++    head = body.get("defect_head")
++    if head:  # tampilkan model cacat mana yang aktif, supaya salah konfigurasi langsung terlihat
++        message += (
++            f" | cacat: masukan {head.get('trained_input')}, ambang {head.get('threshold')}, "
++            f"ikut grade: {'ya' if head.get('used_for_grade') else 'tidak'}"
++        )
++    return True, message
+diff --git a/docs/UJI_WEBCAM_CACAT.md b/docs/UJI_WEBCAM_CACAT.md
+new file mode 100644
+index 0000000..d1b7116
+--- /dev/null
++++ b/docs/UJI_WEBCAM_CACAT.md
+@@ -0,0 +1,96 @@
++# Uji webcam model cacat v2
++
++Tujuan: mengukur model cacat v2 pada domain yang sebenarnya (webcam di stasiun foto), yang belum
++pernah diuji. Foto primer dan AgML sama-sama foto HP, jadi hasil "LULUS" di sana belum membuktikan
++apa pun untuk webcam.
++
++Butuh patch 0005-0007 sudah diterapkan.
++
++## 1. Model yang dipakai
++
++Pakai **`defect_v2_ft`** (training dengan fine-tuning, seed 42). Alasan: ambang terbaiknya di foto
++primer dekat 0,5, jadi ambang bawaan 0,5 bisa dipakai tanpa menyetelnya pada 9 foto primer, dan
++recall rejectnya di validasi sedikit paling baik di antara run ft. Run seed 43-45 hanya
++cadangan; perbedaannya kecil.
++
++Model kematangan tetap yang lama. Dua model dari folder berbeda digabung di folder khusus API:
++
++```powershell
++cd "D:\D4 Polije\Semester 5\Project\Codingan\tomato-sorter"
++mkdir models\api_v2
++Copy-Item models\ripeness_resnext101.keras, models\ripeness_resnext101.json models\api_v2\
++# model cacat v2 yang diunduh dari Drive (folder defect_v2_ft):
++Copy-Item "<folder-unduhan>\defect_v2_ft\defect_resnext101.keras", "<folder-unduhan>\defect_v2_ft\defect_resnext101.json" models\api_v2\
++```
++
++Folder `models\api_v2` sudah tercakup `.gitignore` (`models/*`). Model cacat lama di `models\` tidak
++tersentuh.
++
++## 2. Menjalankan API
++
++```powershell
++$env:TOMATO_MODELS_DIR = "models\api_v2"
++$env:TOMATO_GRADE_USES_DEFECT = "1"      # cacat ikut grade (untuk uji; tanpa ini hanya dicatat)
++$env:TOMATO_DEFECT_THRESHOLD = "0.5"     # DIBEKUKAN sebelum uji; jangan diubah di tengah uji
++python -m uvicorn ml.api:app --port 9000
++```
++
++Cek model mana yang aktif: buka `http://127.0.0.1:9000/health` dan lihat `defect_head`:
++
++- `model_file` menunjuk `models\api_v2\defect_resnext101.keras`
++- `trained_input` harus `crop_neutral` (bila `full_frame`, itu model cacat lama)
++- `threshold` 0.5 dan `used_for_grade` true
++
++`python -m tools.camera_predict` juga mencetak ringkasan ini saat mulai.
++
++## 3. Mengambil foto uji
++
++```powershell
++python -m tools.camera_predict --no-dashboard --log-dir data\webcam_test
++```
++
++SPASI = foto dan klasifikasi. Tiap foto menyimpan frame mentah `raw_<waktu>.jpg` dan satu baris di
++`data\webcam_test\results.csv`; terminal mencetak nomor urut tomat (`log uji: tomat no. N`).
++
++Protokol:
++
++- **30-40 tomat berbeda**, minimal **10 cacat jelas** (retak, lubang, keriput, bercak/busuk gelap)
++  dan 20 tanpa cacat dengan variasi kematangan. Tambahan beberapa cacat ringan (level 2).
++- Pencahayaan dan latar **sama dengan kondisi mesin yang sebenarnya**. Jangan menata ulang demi hasil.
++- Letakkan tomat tanpa memilih sisi terbaik; sisi cacat sebaiknya sesekali menghadap atas, sesekali
++  menyamping. Satu tomat, satu foto (foto ulang tomat sama tidak menambah bukti).
++- Tulis nomor urut tomat (dari terminal) di kertas bersama keadaan tomatnya.
++
++## 4. Pelabelan dan evaluasi
++
++Buka `results.csv`, isi `true_defect_level` (**1** = tanpa cacat, **2** = cacat ringan,
++**3** = cacat jelas) dan, bila perlu, `true_ripeness` dan `notes`. Lalu:
++
++```powershell
++python -m tools.eval_webcam_defect --csv data\webcam_test\results.csv --out data\webcam_test\laporan.md
++```
++
++Gerbang (ditetapkan sebelum uji): recall level 3 >= 70% dan level 1 salah ditandai <= 10% pada
++ambang beku 0,5, dengan foto level 3 minimal 10. Foto yang tidak dinilai (crop gagal atau tomat tidak
++valid) dihitung sebagai cacat yang terlewat. Laporan menampilkan rentang kepercayaan 95%; pada
++n sekecil ini rentangnya lebar, jadi baca angkanya bersama rentang itu.
++
++**Jangan memilih ambang dari tabel sapuan lalu menilainya pada data yang sama.** Bila ambang
++ingin diubah, uji ambang baru pada foto webcam yang baru.
++
++## 5. Bila ada masalah
++
++| Gejala | Penyebab dan tindakan |
++|---|---|
++| `defect_status` = `tanpa_frame_mentah` | Klien tidak mengirim frame mentah: pastikan memakai `tools.camera_predict` dari patch ini dan API versi ini |
++| `defect_status` = `crop_gagal` | Segmentasi tidak menemukan tomat utuh. Buka `raw_<waktu>.jpg`: biasanya latar tidak polos, tomat menyentuh tepi, atau pencahayaan ekstrem |
++| `defect_status` = `tomat_tidak_valid` | Segmentasi pipeline PCV menolak gambar sebelum API dipanggil |
++| `/health` menunjukkan `trained_input: full_frame` | Folder model salah: itu model cacat lama. Periksa `TOMATO_MODELS_DIR` |
++| Banyak `crop_gagal` pada tomat pucat/hijau | Segmentasi berbasis saturasi lemah pada tomat pucat; catat jumlahnya, itu temuan untuk laporan |
++
++## 6. Batas patch ini
++
++- **Controller produksi (`controller/main.py`) belum mengirim frame mentah**, jadi di jalur mesin
++  sebenarnya model cacat v2 tetap "tidak dinilai" dan grade mengikuti kematangan, sama seperti
++  sebelumnya. Itu disengaja: dihubungkan setelah uji webcam ini lulus.
++- Model kematangan tetap menerima gambar PCV seperti biasa; jalurnya tidak diubah.
+diff --git a/ml/api.py b/ml/api.py
+index 0809023..fdeb59e 100644
+--- a/ml/api.py
++++ b/ml/api.py
+@@ -47,6 +47,79 @@ NOT_ASSESSED_DEFECT: dict[str, Any] = {
+ }
+ 
+ 
++DEFECT_THRESHOLD_ENV = "TOMATO_DEFECT_THRESHOLD"
++DEFAULT_DEFECT_THRESHOLD = 0.5
++
++
++def _defect_threshold() -> float:
++    """Ambang p_reject untuk menyatakan cacat jelas (bawaan 0,5). Atur lewat TOMATO_DEFECT_THRESHOLD."""
++    raw = os.environ.get(DEFECT_THRESHOLD_ENV)
++    if raw is None or raw.strip() == "":
++        return DEFAULT_DEFECT_THRESHOLD
++    try:
++        value = float(raw)
++    except ValueError:
++        value = float("nan")
++    if not 0.0 < value < 1.0:
++        logger.warning(
++            "%s=%r tidak valid (harus di antara 0 dan 1); memakai %.2f.",
++            DEFECT_THRESHOLD_ENV, raw, DEFAULT_DEFECT_THRESHOLD,
++        )
++        return DEFAULT_DEFECT_THRESHOLD
++    return value
++
++
++def _not_assessed(reason: str) -> dict[str, Any]:
++    return {**NOT_ASSESSED_DEFECT, "probabilities": {}, "reason": reason}
++
++
++def _defect_training_input(metadata: dict[str, Any]) -> str | None:
++    """"neutral"/"keep" bila model cacat dilatih pada crop tomat (metadata dari ml.train + prepare_defect_v2).
++
++    None berarti model lama yang dilatih pada foto penuh.
++    """
++    background = (metadata.get("data_preparation") or {}).get("background")
++    return background if background in ("neutral", "keep") else None
++
++
++def _predict_defect(
++    defect_model: Any,
++    defect_metadata: dict[str, Any],
++    preprocess_input: Any,
++    processed: np.ndarray,
++    defect_source: Image.Image | None,
++    threshold: float,
++) -> dict[str, Any]:
++    """Model lama: argmax pada masukan yang sama dengan kematangan. Model crop: crop dari frame mentah."""
++    mode = _defect_training_input(defect_metadata)
++    if mode is None:
++        return _class_prediction(
++            defect_model.predict(processed, verbose=0)[0], defect_metadata["class_names"], DEFECT_LEVELS
++        )
++    if defect_source is None:
++        # Model dilatih pada crop mentah; gambar PCV (CLAHE) bukan masukan yang sama. Jangan menebak.
++        return _not_assessed("tanpa_frame_mentah")
++    from vision.crop import crop_for_inference
++
++    crop = crop_for_inference(defect_source, mode)
++    if crop is None:
++        return _not_assessed("crop_gagal")
++    pixels = np.asarray(crop.resize((INPUT_SIZE[1], INPUT_SIZE[0])), dtype=np.float32)
++    probabilities = defect_model.predict(preprocess_input(np.expand_dims(pixels, axis=0)), verbose=0)[0]
++    names = list(defect_metadata["class_names"])
++    p_reject = float(probabilities[names.index("reject")])
++    chosen = "reject" if p_reject >= threshold else "healthy"
++    return {
++        "class": chosen,
++        "level": DEFECT_LEVELS[chosen],
++        "confidence": p_reject if chosen == "reject" else 1.0 - p_reject,
++        "probabilities": {label: float(probabilities[i]) for i, label in enumerate(names)},
++        "p_reject": p_reject,
++        "threshold": threshold,
++        "input": f"crop_{mode}",
++    }
++
++
+ def _grade_uses_defect() -> bool:
+     """Bawaan: grade hanya dari kematangan. Atur TOMATO_GRADE_USES_DEFECT=1 agar kepala cacat ikut dipakai.
+ 
+@@ -62,8 +135,12 @@ def _public_result(result: dict[str, Any]) -> dict[str, Any]:
+     if result.get("grade_basis") != "ripeness":
+         return result
+     shown = dict(result)
+-    shown["defect_raw"] = result.get("defect")
+-    shown["defect"] = dict(NOT_ASSESSED_DEFECT)
++    raw = result.get("defect") or {}
++    shown["defect_raw"] = raw
++    shown["defect"] = {
++        **NOT_ASSESSED_DEFECT,
++        "reason": raw.get("reason") if raw.get("level") is None else "tidak_ikut_grade",
++    }
+     return shown
+ 
+ 
+@@ -78,6 +155,7 @@ def warm_up(models_dir: Path | None = None, architecture: str | None = None) ->
+     try:
+         chosen = architecture or _default_architecture()
+         predict_image(Image.new("RGB", INPUT_SIZE, (128, 128, 128)), directory, chosen)
++        _warm_defect_head(directory, chosen)
+     except Exception as exc:  # noqa: BLE001 - server harus tetap hidup agar /health bisa menjelaskan masalahnya
+         logger.warning("Warm-up model dilewati: %s", exc)
+         return False
+@@ -85,6 +163,31 @@ def warm_up(models_dir: Path | None = None, architecture: str | None = None) ->
+     return True
+ 
+ 
++def _warm_defect_head(directory: Path, architecture: str) -> None:
++    """Panaskan jalur crop + model cacat bila model cacat dilatih pada crop (best-effort, tidak menggagalkan warm-up)."""
++    try:
++        _, _, _, defect_metadata, _ = _load_models(str(directory.resolve()), architecture)
++        if _defect_training_input(defect_metadata) is None:
++            return
++        predict_image(
++            Image.new("RGB", INPUT_SIZE, (128, 128, 128)),
++            directory,
++            architecture,
++            defect_source=_warmup_scene(),
++        )
++    except Exception as exc:  # noqa: BLE001
++        logger.warning("Pemanasan model cacat dilewati: %s", exc)
++
++
++def _warmup_scene() -> Image.Image:
++    """Tomat sintetis agar jalur crop dan model cacat ikut dipanaskan (bukan hanya model kematangan)."""
++    from PIL import ImageDraw
++
++    scene = Image.new("RGB", (640, 480), (255, 255, 255))
++    ImageDraw.Draw(scene).ellipse((220, 140, 420, 340), fill=(200, 40, 30))
++    return scene
++
++
+ @asynccontextmanager
+ async def lifespan(_app: FastAPI):
+     if os.environ.get("TOMATO_WARMUP", "1") != "0":
+@@ -165,8 +268,13 @@ def predict_image(
+     image: Image.Image,
+     models_dir: Path = DEFAULT_MODELS_DIR,
+     architecture: str = DEFAULT_ARCHITECTURE,
++    defect_source: Image.Image | None = None,
+ ) -> dict[str, Any]:
+-    """Run both classifiers and combine their levels using the project rubric."""
++    """Run both classifiers and combine their levels using the project rubric.
++
++    defect_source: frame mentah untuk model cacat yang dilatih pada crop tomat (lihat
++    _defect_training_input). Diabaikan oleh model cacat lama (foto penuh).
++    """
+     (
+         ripeness_model,
+         defect_model,
+@@ -178,19 +286,22 @@ def predict_image(
+     pixels = np.asarray(resized, dtype=np.float32)
+     processed = preprocess_input(np.expand_dims(pixels, axis=0))
+     ripeness_probabilities = ripeness_model.predict(processed, verbose=0)[0]
+-    defect_probabilities = defect_model.predict(processed, verbose=0)[0]
+ 
+     ripeness = _class_prediction(
+         ripeness_probabilities,
+         ripeness_metadata["class_names"],
+         RIPENESS_LEVELS,
+     )
+-    defect = _class_prediction(
+-        defect_probabilities,
+-        defect_metadata["class_names"],
+-        DEFECT_LEVELS,
++    defect = _predict_defect(
++        defect_model,
++        defect_metadata,
++        preprocess_input,
++        processed,
++        defect_source,
++        _defect_threshold(),
+     )
+-    uses_defect = _grade_uses_defect()
++    # Cacat ikut grade hanya bila diaktifkan DAN berhasil dinilai (crop gagal tidak boleh dianggap sehat atau cacat).
++    uses_defect = _grade_uses_defect() and defect["level"] is not None
+     return {
+         "model": display_name(architecture),
+         "architecture": architecture,
+@@ -222,12 +333,55 @@ def health() -> dict[str, Any]:
+         "architecture": default,
+         "missing_files": architectures[default]["missing_files"],
+         "architectures": architectures,
++        "defect_head": _defect_head_info(DEFAULT_MODELS_DIR, default),
++    }
++
++
++def _defect_head_info(models_dir: Path, architecture: str) -> dict[str, Any]:
++    """Model cacat mana yang dipakai dan bagaimana: berkas, masukan saat training, ambang, ikut grade atau tidak."""
++    model_path, metadata_path = artifact_paths(models_dir, "defect", architecture)
++    info: dict[str, Any] = {
++        "model_file": str(model_path),
++        "model_exists": model_path.is_file(),
++        "trained_input": None,
++        "threshold": _defect_threshold(),
++        "used_for_grade": _grade_uses_defect(),
+     }
++    if model_path.is_file():
++        info["model_size_mb"] = round(model_path.stat().st_size / 1e6, 1)
++    try:
++        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return info
++    mode = _defect_training_input(metadata)
++    info["trained_input"] = f"crop_{mode}" if mode else "full_frame"
++    info["data_preparation"] = metadata.get("data_preparation")
++    return info
++
++
++async def _read_image(upload: UploadFile) -> Image.Image:
++    content = await upload.read(MAX_IMAGE_BYTES + 1)
++    if len(content) > MAX_IMAGE_BYTES:
++        raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
++    try:
++        with Image.open(io.BytesIO(content)) as image:
++            image.load()
++            return image.convert("RGB")
++    except (UnidentifiedImageError, OSError) as exc:
++        raise HTTPException(
++            status_code=422,
++            detail="Uploaded file is not a readable JPG, PNG, or supported HEIC image.",
++        ) from exc
+ 
+ 
+ @app.post("/predict")
+ async def predict(
+     file: UploadFile = File(...),
++    frame: UploadFile | None = File(
++        default=None,
++        description="Frame mentah (opsional). Dipakai model cacat yang dilatih pada crop tomat; "
++        "tanpa ini, model cacat seperti itu melaporkan tidak_dinilai.",
++    ),
+     architecture: str | None = Query(
+         default=None,
+         pattern=ARCHITECTURE_PATTERN,
+@@ -239,18 +393,9 @@ async def predict(
+     ),
+ ) -> dict[str, Any]:
+     chosen = architecture or _default_architecture()
+-    content = await file.read(MAX_IMAGE_BYTES + 1)
+-    if len(content) > MAX_IMAGE_BYTES:
+-        raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
+-    try:
+-        with Image.open(io.BytesIO(content)) as image:
+-            image.load()
+-            decoded_image = image.convert("RGB")
+-    except (UnidentifiedImageError, OSError) as exc:
+-        raise HTTPException(
+-            status_code=422,
+-            detail="Uploaded file is not a readable JPG, PNG, or supported HEIC image.",
+-        ) from exc
++    decoded_image = await _read_image(file)
++    frame_image = await _read_image(frame) if frame is not None else None
++    raw_image = decoded_image
+ 
+     pcv_summary: dict[str, Any] | None = None
+     if apply_pcv:
+@@ -270,8 +415,11 @@ async def predict(
+             "luas_piksel": round(pcv["luas_piksel"], 1),
+         }
+ 
++    # Dengan apply_pcv gambar asli (sebelum PCV) otomatis menjadi sumber model cacat.
++    defect_source = frame_image if frame_image is not None else (raw_image if apply_pcv else None)
++    options = {"defect_source": defect_source} if defect_source is not None else {}
+     try:
+-        result = predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
++        result = _public_result(predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen, **options))
+     except FileNotFoundError as exc:
+         raise HTTPException(status_code=503, detail=str(exc)) from exc
+     if pcv_summary is not None:
+diff --git a/ml/metrics.py b/ml/metrics.py
+index 839ab2c..1d8cdcc 100644
+--- a/ml/metrics.py
++++ b/ml/metrics.py
+@@ -59,6 +59,17 @@ def classification_metrics(
+     }
+ 
+ 
++def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float] | None:
++    """Rentang kepercayaan 95% (Wilson) untuk proporsi; None bila total 0. Lebih jujur daripada p +- galat pada n kecil."""
++    if total <= 0:
++        return None
++    proportion = successes / total
++    denominator = 1 + z * z / total
++    center = (proportion + z * z / (2 * total)) / denominator
++    half = z * np.sqrt(proportion * (1 - proportion) / total + z * z / (4 * total * total)) / denominator
++    return max(0.0, float(center - half)), min(1.0, float(center + half))
++
++
+ def binary_ranking_metrics(
+     expected: Sequence[int],
+     scores: Sequence[float],
+diff --git a/ml/run_logging.py b/ml/run_logging.py
+index 72d2c61..2dcb207 100644
+--- a/ml/run_logging.py
++++ b/ml/run_logging.py
+@@ -410,8 +410,13 @@ def start_run(
+ # --------------------------------------------------------------------------- grafik
+ 
+ 
+-def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
+-    """Kurva loss dan akurasi (train vs val) per task. Dilewati bila matplotlib tidak ada."""
++def _pyplot() -> Any:
++    """pyplot dengan backend Agg, atau None bila matplotlib tidak terpasang.
++
++    MPLBACKEND bawaan Colab/Jupyter (module://matplotlib_inline...) tidak valid di luar notebook
++    (mis. virtualenv terpisah) dan membuat `import matplotlib` melempar ValueError, jadi dipaksa Agg.
++    """
++    os.environ["MPLBACKEND"] = "Agg"
+     try:
+         import matplotlib
+ 
+@@ -419,7 +424,23 @@ def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
+         import matplotlib.pyplot as plt
+     except ImportError:
+         logger.warning("matplotlib tidak terpasang; grafik dilewati (pip install matplotlib).")
++        return None
++    return plt
++
++
++def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
++    """Kurva loss dan akurasi (train vs val) per task. Gagal/tanpa matplotlib: dilewati, tidak error."""
++    plt = _pyplot()
++    if plt is None:
++        return []
++    try:
++        return _draw_curves(plt, history_path, output_dir)
++    except Exception as exc:  # noqa: BLE001 - grafik hanya pelengkap; tidak boleh menggagalkan training
++        logger.warning("Grafik kurva dilewati: %s", exc)
+         return []
++
++
++def _draw_curves(plt: Any, history_path: Path, output_dir: Path) -> list[Path]:
+     rows = read_history(history_path)
+     written: list[Path] = []
+     for task in dict.fromkeys(row["task"] for row in rows):
+@@ -451,13 +472,17 @@ def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
+ 
+ 
+ def plot_confusion(metrics: Mapping[str, Any], output_path: Path, title: str) -> Path | None:
++    plt = _pyplot()
++    if plt is None:
++        return None
+     try:
+-        import matplotlib
+-
+-        matplotlib.use("Agg")
+-        import matplotlib.pyplot as plt
+-    except ImportError:
++        return _draw_confusion(plt, metrics, output_path, title)
++    except Exception as exc:  # noqa: BLE001 - lihat plot_curves
++        logger.warning("Grafik confusion matrix dilewati: %s", exc)
+         return None
++
++
++def _draw_confusion(plt: Any, metrics: Mapping[str, Any], output_path: Path, title: str) -> Path:
+     classes = list(metrics["classes"])
+     matrix = metrics["confusion_matrix"]
+     figure, axis = plt.subplots(figsize=(1.6 + 1.2 * len(classes), 1.4 + 1.1 * len(classes)))
+diff --git a/ml/train.py b/ml/train.py
+index c650137..c9556cf 100644
+--- a/ml/train.py
++++ b/ml/train.py
+@@ -600,17 +600,10 @@ def _evaluate_primary(
+ 
+ 
+ def _crop_for_inference(image: Any, mode: str) -> Any:
+-    """Crop tomat dengan fungsi yang sama seperti persiapan dataset (vision.crop), atau None."""
+-    import cv2
+-    from PIL import Image
+-
+-    from vision.crop import crop_largest_tomato, pil_to_bgr
++    """Crop tomat lewat jalur yang sama dengan API (vision.crop.crop_for_inference), atau None."""
++    from vision.crop import crop_for_inference
+ 
+-    # Di alat hanya ada satu tomat: tidak perlu uji solidity ketat (itu untuk memurnikan dataset).
+-    crop = crop_largest_tomato(
+-        pil_to_bgr(image), size=256, neutral_background=(mode == "neutral"), min_solidity=0.0
+-    )
+-    return None if crop is None else Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
++    return crop_for_inference(image, mode)
+ 
+ 
+ def _evaluate_defect_primary(
+diff --git a/tests/test_ml_api_defect.py b/tests/test_ml_api_defect.py
+new file mode 100644
+index 0000000..7c97484
+--- /dev/null
++++ b/tests/test_ml_api_defect.py
+@@ -0,0 +1,251 @@
++import io
++import json
++import logging
++import sys
++import types
++from pathlib import Path
++
++import numpy as np
++import pytest
++from fastapi.testclient import TestClient
++from PIL import Image, ImageDraw
++
++from ml import api
++from vision.crop import crop_for_inference
++
++
++class _Model:
++    def __init__(self, probabilities):
++        self.probabilities = np.array([probabilities], dtype=np.float32)
++        self.calls: list[tuple[int, ...]] = []
++
++    def predict(self, batch, verbose=0):
++        self.calls.append(tuple(batch.shape))
++        return self.probabilities
++
++
++CROP_META = {"class_names": ["healthy", "reject"], "data_preparation": {"background": "neutral"}}
++LEGACY_META = {"class_names": ["healthy", "reject"]}
++RIPENESS_META = {"class_names": ["matang", "setengah_matang", "mentah"]}
++
++
++def _scene(tomato: bool = True) -> Image.Image:
++    image = Image.new("RGB", (640, 480), (255, 255, 255))
++    if tomato:
++        ImageDraw.Draw(image).ellipse((220, 140, 420, 340), fill=(200, 40, 30))
++    return image
++
++
++def _jpeg(image: Image.Image) -> bytes:
++    buffer = io.BytesIO()
++    image.save(buffer, format="JPEG")
++    return buffer.getvalue()
++
++
++@pytest.fixture
++def models(monkeypatch, tmp_path):
++    """Pasang model palsu; kembalikan (ripeness_model, defect_model). Ripeness bawaan: matang."""
++
++    def install(p_reject: float, metadata=CROP_META, ripeness=(0.9, 0.05, 0.05)):
++        ripeness_model, defect_model = _Model(ripeness), _Model([1.0 - p_reject, p_reject])
++        monkeypatch.setattr(
++            api,
++            "_load_models",
++            lambda models_dir, architecture="resnext101": (
++                ripeness_model, defect_model, RIPENESS_META, metadata, lambda pixels: pixels / 255.0,
++            ),
++        )
++        return ripeness_model, defect_model
++
++    monkeypatch.delenv("TOMATO_DEFECT_THRESHOLD", raising=False)
++    monkeypatch.delenv("TOMATO_GRADE_USES_DEFECT", raising=False)
++    return install
++
++
++def _predict(source, tmp_path):
++    return api.predict_image(_scene(), tmp_path, "resnext101", defect_source=source)
++
++
++def test_crop_model_scores_the_crop_of_the_raw_frame(models, tmp_path):
++    _, defect_model = models(0.8)
++
++    defect = _predict(_scene(), tmp_path)["defect"]
++
++    assert defect["class"] == "reject" and defect["level"] == 3
++    assert defect["p_reject"] == pytest.approx(0.8) and defect["confidence"] == pytest.approx(0.8)
++    assert defect["input"] == "crop_neutral" and defect["threshold"] == 0.5
++    assert defect_model.calls == [(1, 224, 224, 3)]
++
++
++def test_threshold_comes_from_the_environment(models, tmp_path, monkeypatch):
++    models(0.8)
++    monkeypatch.setenv("TOMATO_DEFECT_THRESHOLD", "0.9")
++
++    defect = _predict(_scene(), tmp_path)["defect"]
++
++    assert defect["class"] == "healthy" and defect["level"] == 1
++    assert defect["confidence"] == pytest.approx(0.2) and defect["threshold"] == 0.9
++
++
++@pytest.mark.parametrize("bad", ["abc", "0", "1", "1.5", "-0.2"])
++def test_invalid_threshold_falls_back_to_default_with_a_warning(bad, monkeypatch, caplog):
++    monkeypatch.setenv("TOMATO_DEFECT_THRESHOLD", bad)
++
++    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
++        assert api._defect_threshold() == 0.5
++
++    assert "TOMATO_DEFECT_THRESHOLD" in caplog.text
++
++
++def test_without_the_raw_frame_a_crop_model_does_not_guess(models, tmp_path):
++    _, defect_model = models(0.99)
++
++    result = api.predict_image(_scene(), tmp_path, "resnext101")
++
++    assert result["defect"]["class"] == "tidak_dinilai"
++    assert result["defect"]["reason"] == "tanpa_frame_mentah"
++    assert defect_model.calls == []
++
++
++def test_a_frame_without_a_tomato_is_not_assessed(models, tmp_path):
++    models(0.99)
++
++    defect = _predict(_scene(tomato=False), tmp_path)["defect"]
++
++    assert defect["class"] == "tidak_dinilai" and defect["reason"] == "crop_gagal"
++
++
++def test_legacy_full_frame_model_keeps_the_old_behaviour(models, tmp_path):
++    _, defect_model = models(0.8, metadata=LEGACY_META)
++
++    defect = _predict(_scene(), tmp_path)["defect"]
++
++    assert defect["class"] == "reject" and "p_reject" not in defect
++    assert defect_model.calls == [(1, 224, 224, 3)]
++
++
++def test_grade_ignores_defect_by_default(models, tmp_path):
++    models(0.95)
++
++    result = _predict(_scene(), tmp_path)
++
++    assert result["grade"] == "A" and result["grade_basis"] == "ripeness"
++
++
++def test_enabled_defect_makes_a_clear_defect_grade_c(models, tmp_path, monkeypatch):
++    models(0.95)
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++
++    result = _predict(_scene(), tmp_path)
++
++    assert result["grade"] == "C" and result["grade_basis"] == "ripeness+defect"
++
++
++def test_enabled_defect_that_could_not_be_assessed_falls_back_to_ripeness(models, tmp_path, monkeypatch):
++    models(0.95)
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++
++    result = api.predict_image(_scene(), tmp_path, "resnext101")  # tanpa frame mentah
++
++    assert result["grade"] == "A" and result["grade_basis"] == "ripeness"
++
++
++def test_public_result_explains_why_the_defect_is_hidden():
++    assessed = {"grade_basis": "ripeness", "defect": {"level": 3, "p_reject": 0.9, "class": "reject"}}
++    skipped = {"grade_basis": "ripeness", "defect": {"level": None, "reason": "crop_gagal"}}
++
++    shown_assessed = api._public_result(assessed)
++    shown_skipped = api._public_result(skipped)
++
++    assert shown_assessed["defect"]["reason"] == "tidak_ikut_grade"
++    assert shown_assessed["defect_raw"]["p_reject"] == 0.9
++    assert shown_skipped["defect"]["reason"] == "crop_gagal"
++
++
++def _post(client, **extra):
++    files = {"file": ("e.jpg", _jpeg(_scene()), "image/jpeg")}
++    if extra.pop("with_frame", False):
++        files["frame"] = ("f.jpg", _jpeg(_scene()), "image/jpeg")
++    return client.post("/predict", files=files, params=extra).json()
++
++
++def test_endpoint_uses_the_uploaded_frame_for_the_defect_head(models, monkeypatch):
++    models(0.9)
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++
++    body = _post(TestClient(api.app), with_frame=True)
++
++    assert body["grade"] == "C" and body["defect"]["class"] == "reject"
++    assert body["defect"]["p_reject"] == pytest.approx(0.9, abs=1e-6)
++
++
++def test_endpoint_hides_the_defect_but_keeps_p_reject_when_not_used_for_grade(models):
++    models(0.9)
++
++    body = _post(TestClient(api.app), with_frame=True)
++
++    assert body["grade"] == "A"
++    assert body["defect"]["class"] == "tidak_dinilai" and body["defect"]["reason"] == "tidak_ikut_grade"
++    assert body["defect_raw"]["p_reject"] == pytest.approx(0.9, abs=1e-6)
++
++
++def test_endpoint_without_frame_reports_missing_raw_frame(models, monkeypatch):
++    models(0.9)
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++
++    body = _post(TestClient(api.app))
++
++    assert body["grade"] == "A" and body["defect_raw"]["reason"] == "tanpa_frame_mentah"
++
++
++def test_apply_pcv_uses_the_original_image_for_the_defect_head(models, monkeypatch):
++    _, defect_model = models(0.9)
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++    fake = types.ModuleType("vision.features")
++    fake.extract_pcv_features = lambda frame, crop_size=300: {
++        "img_enhanced_rgb": np.full((300, 300, 3), 90, dtype=np.uint8),  # tanpa tomat sama sekali
++        "persen_merah": 1.0, "persen_oranye": 0.0, "persen_kuning": 0.0, "persen_hijau": 0.0,
++        "persentase_cacat": 0.0, "jumlah_kontur_cacat": 0, "luas_piksel": 1.0,
++    }
++    monkeypatch.setitem(sys.modules, "vision.features", fake)
++
++    body = _post(TestClient(api.app), apply_pcv="true")
++
++    assert body["defect"]["class"] == "reject"  # crop berhasil dari gambar asli, bukan dari gambar PCV abu-abu
++    assert "pcv" in body and len(defect_model.calls) == 1
++
++
++def test_health_reports_which_defect_model_is_used(monkeypatch, tmp_path):
++    monkeypatch.setattr(api, "DEFAULT_MODELS_DIR", tmp_path)
++    (tmp_path / "defect_resnext101.keras").write_bytes(b"x" * 10)
++    (tmp_path / "defect_resnext101.json").write_text(json.dumps(CROP_META), encoding="utf-8")
++    monkeypatch.setenv("TOMATO_DEFECT_THRESHOLD", "0.4")
++
++    head = TestClient(api.app).get("/health").json()["defect_head"]
++
++    assert head["trained_input"] == "crop_neutral" and head["threshold"] == 0.4
++    assert head["model_exists"] is True and head["used_for_grade"] is False
++    assert head["data_preparation"] == {"background": "neutral"}
++
++
++def test_health_marks_a_legacy_defect_model_as_full_frame(monkeypatch, tmp_path):
++    monkeypatch.setattr(api, "DEFAULT_MODELS_DIR", tmp_path)
++    (tmp_path / "defect_resnext101.json").write_text(json.dumps(LEGACY_META), encoding="utf-8")
++
++    assert TestClient(api.app).get("/health").json()["defect_head"]["trained_input"] == "full_frame"
++
++
++def test_warm_up_also_runs_the_defect_head_of_a_crop_model(models, tmp_path):
++    _, defect_model = models(0.5)
++
++    assert api.warm_up(tmp_path, "resnext101") is True
++    assert len(defect_model.calls) == 1  # hanya lewat adegan sintetis; foto kosong tidak memanggilnya
++
++
++def test_crop_for_inference_returns_a_square_pil_crop_or_none():
++    crop = crop_for_inference(_scene(), "neutral", size=128)
++
++    assert crop is not None and crop.size == (128, 128)
++    assert crop_for_inference(_scene(tomato=False), "neutral") is None
++    with pytest.raises(ValueError):
++        crop_for_inference(_scene(), "blur")
+diff --git a/tests/test_run_logging_plots.py b/tests/test_run_logging_plots.py
+new file mode 100644
+index 0000000..8785d78
+--- /dev/null
++++ b/tests/test_run_logging_plots.py
+@@ -0,0 +1,56 @@
++import importlib.util
++import logging
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++from ml import run_logging
++from ml.run_logging import EpochRecorder, plot_confusion, plot_curves
++
++ROOT = Path(__file__).resolve().parent.parent
++needs_matplotlib = pytest.mark.skipif(
++    importlib.util.find_spec("matplotlib") is None, reason="matplotlib tidak terpasang"
++)
++
++
++@needs_matplotlib
++def test_plots_work_even_when_mplbackend_is_the_notebook_inline_backend(tmp_path: Path):
++    """Regresi dari Colab: MPLBACKEND=module://matplotlib_inline... membuat `import matplotlib` gagal."""
++    history = tmp_path / "history.csv"
++    recorder = EpochRecorder(history, "defect", "head")
++    recorder.record(1, {"loss": 0.5, "accuracy": 0.8, "val_loss": 0.4, "val_accuracy": 0.85}, 1e-3, 1.0)
++    recorder.record(2, {"loss": 0.4, "accuracy": 0.9, "val_loss": 0.35, "val_accuracy": 0.9}, 1e-3, 1.0)
++    script = (
++        "from pathlib import Path\n"
++        "from ml.run_logging import plot_curves, plot_confusion\n"
++        f"out = Path(r'{tmp_path}')\n"
++        f"print(len(plot_curves(Path(r'{history}'), out)))\n"
++        "m = {'classes': ['a', 'b'], 'confusion_matrix': [[3, 1], [0, 4]]}\n"
++        "print(plot_confusion(m, out / 'cm.png', 't') is not None)\n"
++    )
++    env = {**__import__("os").environ, "MPLBACKEND": "module://matplotlib_inline.backend_inline",
++           "PYTHONPATH": str(ROOT)}
++
++    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, cwd=ROOT)
++
++    assert done.returncode == 0, done.stderr
++    assert done.stdout.split() == ["1", "True"]
++    assert (tmp_path / "curves_defect.png").is_file() and (tmp_path / "cm.png").is_file()
++
++
++def test_a_plotting_error_never_aborts_training(tmp_path: Path, monkeypatch, caplog):
++    monkeypatch.setattr(run_logging, "_pyplot", lambda: object())
++
++    def boom(*args, **kwargs):
++        raise RuntimeError("gagal menggambar")
++
++    monkeypatch.setattr(run_logging, "_draw_curves", boom)
++    monkeypatch.setattr(run_logging, "_draw_confusion", boom)
++
++    with caplog.at_level(logging.WARNING, logger="ml.run_logging"):
++        assert plot_curves(tmp_path / "h.csv", tmp_path) == []
++        assert plot_confusion({"classes": [], "confusion_matrix": []}, tmp_path / "c.png", "t") is None
++
++    assert "dilewati" in caplog.text
+diff --git a/tests/test_webcam_defect_tools.py b/tests/test_webcam_defect_tools.py
+new file mode 100644
+index 0000000..5d6a27f
+--- /dev/null
++++ b/tests/test_webcam_defect_tools.py
+@@ -0,0 +1,266 @@
++import csv
++import io
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++import cv2
++import numpy as np
++import pytest
++from fastapi.testclient import TestClient
++from PIL import Image, ImageDraw
++
++from controller import ml_client
++from controller.ml_client import build_multipart, check_api, make_image_predictor
++from ml import api
++from ml.metrics import wilson_interval
++from tools import eval_webcam_defect as ev
++from tools.camera_predict import (
++    LOG_COLUMNS,
++    analyze,
++    append_result_row,
++    next_row_number,
++    result_row,
++)
++
++BG = (235, 235, 235)
++RESULT = {
++    "architecture": "resnext101",
++    "grade": "A",
++    "ripeness": {"class": "matang", "level": 1, "confidence": 0.9, "probabilities": {}},
++    "defect": {"class": "reject", "level": 3, "confidence": 0.8, "p_reject": 0.8,
++               "threshold": 0.5, "input": "crop_neutral", "probabilities": {}},
++}
++
++
++def _frame(with_tomato):
++    img = np.full((480, 640, 3), BG, dtype=np.uint8)
++    if with_tomato:
++        cv2.circle(img, (320, 240), 90, (30, 30, 200), -1)
++    return img
++
++
++# ------------------------------------------------------------------ klien multipart
++
++
++def test_multipart_is_byte_identical_to_before_when_no_frame_is_attached():
++    body, content_type = build_multipart(b"JPEG")
++    boundary = content_type.split("boundary=")[1]
++    expected = (
++        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="frame.jpg"\r\n'
++        "Content-Type: image/jpeg\r\n\r\n"
++    ).encode() + b"JPEG" + f"\r\n--{boundary}--\r\n".encode()
++
++    assert body == expected
++
++
++def test_multipart_with_frame_is_parsed_by_the_real_api(monkeypatch):
++    class Model:
++        def __init__(self, probabilities):
++            self.probabilities = np.array([probabilities], dtype=np.float32)
++
++        def predict(self, batch, verbose=0):
++            return self.probabilities
++
++    meta = {"class_names": ["healthy", "reject"], "data_preparation": {"background": "neutral"}}
++    monkeypatch.setattr(
++        api, "_load_models",
++        lambda models_dir, architecture="resnext101": (
++            Model([0.9, 0.05, 0.05]), Model([0.1, 0.9]),
++            {"class_names": ["matang", "setengah_matang", "mentah"]}, meta, lambda x: x / 255.0,
++        ),
++    )
++    monkeypatch.setenv("TOMATO_GRADE_USES_DEFECT", "1")
++    scene = Image.new("RGB", (640, 480), (255, 255, 255))
++    ImageDraw.Draw(scene).ellipse((220, 140, 420, 340), fill=(200, 40, 30))
++    buffer = io.BytesIO()
++    scene.save(buffer, format="JPEG")
++    body, content_type = build_multipart(buffer.getvalue(), frame_jpeg=buffer.getvalue())
++
++    response = TestClient(api.app).post("/predict", content=body, headers={"Content-Type": content_type})
++
++    assert response.status_code == 200
++    assert response.json()["defect"]["p_reject"] == pytest.approx(0.9, abs=1e-6)
++
++
++def test_image_predictor_declares_that_it_accepts_a_raw_frame():
++    assert make_image_predictor("http://127.0.0.1:9000").accepts_frame is True
++
++
++class _Response:
++    def __init__(self, payload):
++        self.payload = payload
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *args):
++        return False
++
++    def read(self):
++        return json.dumps(self.payload).encode()
++
++
++def test_check_api_shows_which_defect_model_is_active(monkeypatch):
++    health = {"status": "ready", "architecture": "resnext101",
++              "architectures": {"resnext101": {"status": "ready", "missing_files": []}},
++              "defect_head": {"trained_input": "crop_neutral", "threshold": 0.5, "used_for_grade": False}}
++    monkeypatch.setattr(ml_client.request, "urlopen", lambda url, timeout=0: _Response(health))
++
++    ok, message = check_api("http://x")
++
++    assert ok and "crop_neutral" in message and "ambang 0.5" in message and "ikut grade: tidak" in message
++
++
++def test_check_api_message_is_unchanged_for_an_older_api(monkeypatch):
++    health = {"status": "ready", "architecture": "resnext101",
++              "architectures": {"resnext101": {"status": "ready", "missing_files": []}}}
++    monkeypatch.setattr(ml_client.request, "urlopen", lambda url, timeout=0: _Response(health))
++
++    assert check_api("http://x") == (True, "API model siap (resnext101)")
++
++
++# ------------------------------------------------------------------ camera_predict
++
++
++def test_analyze_sends_the_raw_frame_only_to_predictors_that_accept_it():
++    seen: dict = {}
++
++    def modern(jpeg, frame_jpeg=None):
++        seen.update(enhanced=len(jpeg), frame=len(frame_jpeg) if frame_jpeg else None)
++        return RESULT
++
++    modern.accepts_frame = True
++    legacy_calls = []
++
++    def legacy(jpeg):
++        legacy_calls.append(len(jpeg))
++        return RESULT
++
++    assert analyze(_frame(True), _frame(False), None, modern)["valid"]
++    assert seen["enhanced"] > 0 and seen["frame"] > 0
++    assert analyze(_frame(True), _frame(False), None, legacy)["valid"] and len(legacy_calls) == 1
++
++
++def test_result_row_for_an_assessed_defect():
++    row = result_row(3, 1700000000000, "raw_1.jpg", {"result": RESULT})
++
++    assert row["no"] == 3 and row["grade"] == "A" and row["defect_status"] == "dinilai"
++    assert row["defect_p_reject"] == 0.8 and row["defect_input"] == "crop_neutral"
++    assert row["true_defect_level"] == "" and set(row) == set(LOG_COLUMNS)
++
++
++def test_result_row_reads_p_reject_from_the_hidden_raw_defect():
++    hidden = {**RESULT, "defect": {"class": "tidak_dinilai", "level": None, "reason": "tidak_ikut_grade"},
++              "defect_raw": RESULT["defect"]}
++
++    row = result_row(1, 1, "r.jpg", {"result": hidden})
++
++    assert row["defect_class"] == "tidak_dinilai" and row["defect_status"] == "dinilai"
++    assert row["defect_p_reject"] == 0.8
++
++
++def test_result_row_records_why_the_defect_was_not_assessed_and_invalid_captures():
++    skipped = {**RESULT, "defect": {"class": "tidak_dinilai", "level": None, "reason": "crop_gagal"}}
++
++    assert result_row(1, 1, "r.jpg", {"result": skipped})["defect_status"] == "crop_gagal"
++    invalid = result_row(2, 2, "r2.jpg", {"result": None, "valid": False})
++    assert invalid["defect_status"] == "tomat_tidak_valid" and invalid["grade"] == ""
++
++
++def test_result_row_falls_back_to_probabilities_for_a_legacy_model():
++    legacy = {**RESULT, "defect": {"class": "reject", "level": 3, "confidence": 0.7,
++                                   "probabilities": {"healthy": 0.3, "reject": 0.7}}}
++
++    assert result_row(1, 1, "r.jpg", {"result": legacy})["defect_p_reject"] == 0.7
++
++
++def test_log_csv_has_one_header_and_continues_numbering(tmp_path: Path):
++    path = tmp_path / "log" / "results.csv"
++    assert next_row_number(path) == 1
++    append_result_row(path, result_row(1, 10, "a.jpg", {"result": RESULT}))
++    assert next_row_number(path) == 2
++    append_result_row(path, result_row(2, 20, "b.jpg", {"result": RESULT}))
++
++    with path.open(newline="", encoding="utf-8") as file:
++        rows = list(csv.DictReader(file))
++    assert [row["no"] for row in rows] == ["1", "2"] and "\r" not in path.read_text(encoding="utf-8")
++
++
++# ------------------------------------------------------------------ evaluasi
++
++
++def _rows(level3, level1, level2=()):
++    """Setiap elemen: p_reject (angka) atau None bila tidak dinilai."""
++    rows = []
++    for level, scores in ((3, level3), (1, level1), (2, level2)):
++        for score in scores:
++            rows.append({"true_defect_level": str(level), "defect_p_reject": "" if score is None else str(score)})
++    rows.append({"true_defect_level": "", "defect_p_reject": "0.99"})  # belum berlabel: diabaikan
++    return rows
++
++
++def test_wilson_interval():
++    low, high = wilson_interval(8, 9)
++    assert low == pytest.approx(0.565, abs=0.01) and high == pytest.approx(0.980, abs=0.01)
++    assert wilson_interval(0, 0) is None
++    assert wilson_interval(0, 10)[0] == 0.0
++
++
++def test_evaluation_passes_with_enough_positives_good_recall_and_low_false_positives():
++    result = ev.evaluate(_rows([0.9] * 8 + [0.3, 0.2], [0.1] * 19 + [0.8]), threshold=0.5)
++
++    assert result["rows_labeled"] == 30 and result["recall"] == 0.8 and result["fpr"] == 0.05
++    assert result["verdict"] == "LULUS"
++
++
++def test_not_assessed_photos_count_as_missed_defects():
++    result = ev.evaluate(_rows([0.9] * 6 + [None] * 4, [0.1] * 20), threshold=0.5)
++
++    assert result["per_level"][3]["not_assessed"] == 4
++    assert result["recall"] == 0.6 and result["verdict"] == "BELUM LULUS"
++
++
++def test_too_many_false_positives_fail_the_gate():
++    result = ev.evaluate(_rows([0.9] * 10, [0.1] * 16 + [0.9] * 4), threshold=0.5)
++
++    assert result["fpr"] == 0.2 and result["verdict"] == "BELUM LULUS"
++
++
++def test_gate_is_not_decided_with_fewer_than_ten_defective_tomatoes():
++    result = ev.evaluate(_rows([0.9] * 9, [0.1] * 30), threshold=0.5)
++
++    assert result["verdict"].startswith("TIDAK DAPAT DINILAI")
++
++
++def test_the_frozen_threshold_is_what_decides_the_verdict_not_the_sweep():
++    rows = _rows([0.45] * 10, [0.1] * 20)
++
++    assert ev.evaluate(rows, threshold=0.5)["verdict"] == "BELUM LULUS"
++    assert ev.evaluate(rows, threshold=0.4)["verdict"] == "LULUS"
++
++
++def test_render_and_cli(tmp_path: Path, monkeypatch, capsys):
++    path = tmp_path / "results.csv"
++    with path.open("w", newline="", encoding="utf-8") as file:
++        writer = csv.DictWriter(file, fieldnames=["true_defect_level", "defect_p_reject"])
++        writer.writeheader()
++        writer.writerows(_rows([0.9] * 10, [0.1] * 20, [0.2] * 5))
++    out = tmp_path / "laporan.md"
++    monkeypatch.setattr(sys, "argv", ["eval", "--csv", str(path), "--out", str(out)])
++
++    ev.main()
++
++    text = capsys.readouterr().out
++    assert "**LULUS**" in text and "Sapuan ambang" in text and "95%" in text
++    assert out.read_text(encoding="utf-8").startswith("# Evaluasi uji webcam")
++
++
++def test_cli_refuses_a_csv_without_labels(tmp_path: Path, monkeypatch):
++    path = tmp_path / "results.csv"
++    path.write_text("true_defect_level,defect_p_reject\n,0.5\n", encoding="utf-8")
++    monkeypatch.setattr(sys, "argv", ["eval", "--csv", str(path)])
++
++    with pytest.raises(SystemExit, match="true_defect_level"):
++        ev.main()
+diff --git a/tools/camera_predict.py b/tools/camera_predict.py
+index 392e0d4..4d5bca7 100644
+--- a/tools/camera_predict.py
++++ b/tools/camera_predict.py
+@@ -36,7 +36,12 @@ def analyze(frame, background, mm_per_pixel, predict: Callable[[bytes], dict]) -
+     pcv = extract_pcv_features(frame)
+     started = time.perf_counter()
+     # Kirim citra hasil gabungan PCV (Crop 1:1 + LAB Tekstur CLAHE) ke model ResNeXt
+-    result = predict(encode_jpeg(pcv["img_enhanced_bgr"]))
++    enhanced = encode_jpeg(pcv["img_enhanced_bgr"])
++    if getattr(predict, "accepts_frame", False):
++        # Model cacat v2 dilatih pada crop frame mentah (bukan gambar PCV), jadi frame mentah ikut dikirim.
++        result = predict(enhanced, frame_jpeg=encode_jpeg(frame))
++    else:
++        result = predict(enhanced)
+     return {"valid": True, "mask": mask, "features": features, "pcv": pcv, "result": result,
+             "latency_ms": round((time.perf_counter() - started) * 1000, 1)}
+ 
+@@ -58,6 +63,57 @@ def build_tomato_payload(outcome: dict[str, Any], image_path: str | None) -> dic
+     return payload
+ 
+ 
++LOG_COLUMNS = (
++    "no", "timestamp_ms", "raw_file", "grade", "ripeness_class", "ripeness_confidence",
++    "defect_class", "defect_status", "defect_p_reject", "defect_threshold", "defect_input",
++    "true_ripeness", "true_defect_level", "notes",
++)
++
++
++def result_row(no: int, timestamp_ms: int, raw_file: str, outcome: dict[str, Any]) -> dict[str, Any]:
++    """Satu baris log uji webcam. Kolom true_* dan notes dikosongkan untuk diisi manual setelah uji."""
++    row: dict[str, Any] = {column: "" for column in LOG_COLUMNS}
++    row.update(no=no, timestamp_ms=timestamp_ms, raw_file=raw_file, defect_status="tomat_tidak_valid")
++    result = outcome.get("result")
++    if not result:
++        return row
++    raw = result.get("defect_raw") or result.get("defect") or {}
++    p_reject = raw.get("p_reject")
++    if p_reject is None:  # model cacat lama (foto penuh) tidak melaporkan p_reject langsung
++        p_reject = (raw.get("probabilities") or {}).get("reject")
++    row.update(
++        grade=result.get("grade", ""),
++        ripeness_class=(result.get("ripeness") or {}).get("class", ""),
++        ripeness_confidence=round((result.get("ripeness") or {}).get("confidence", 0.0), 4),
++        defect_class=(result.get("defect") or {}).get("class", ""),
++        defect_status="dinilai" if raw.get("level") is not None else raw.get("reason", "tidak_dinilai"),
++        defect_p_reject="" if p_reject is None else round(float(p_reject), 6),
++        defect_threshold="" if raw.get("threshold") is None else raw["threshold"],
++        defect_input=raw.get("input", ""),
++    )
++    return row
++
++
++def next_row_number(csv_path: Path) -> int:
++    """Nomor urut berikutnya (melanjutkan bila file sudah ada), untuk menandai tomat fisik satu per satu."""
++    if not csv_path.is_file():
++        return 1
++    with csv_path.open(newline="", encoding="utf-8") as file:
++        return max(0, sum(1 for _ in file) - 1) + 1
++
++
++def append_result_row(csv_path: Path, row: dict[str, Any]) -> None:
++    import csv
++
++    csv_path.parent.mkdir(parents=True, exist_ok=True)
++    new_file = not csv_path.is_file() or csv_path.stat().st_size == 0
++    with csv_path.open("a", newline="", encoding="utf-8") as file:
++        writer = csv.DictWriter(file, fieldnames=LOG_COLUMNS, lineterminator="\n")
++        if new_file:
++            writer.writeheader()
++        writer.writerow(row)
++
++
+ def _relative(path: Path) -> str:
+     try:
+         return path.relative_to(ROOT).as_posix()
+@@ -77,6 +133,13 @@ def main() -> None:
+ 
+     ap = argparse.ArgumentParser(prog="python -m tools.camera_predict", description=__doc__.splitlines()[0])
+     ap.add_argument("--no-dashboard", action="store_true", help="jangan kirim hasil ke dashboard")
++    ap.add_argument(
++        "--log-dir",
++        type=Path,
++        default=None,
++        help="simpan frame mentah tiap foto (raw_<waktu>.jpg) dan catat hasilnya di <log-dir>/results.csv "
++        "untuk uji webcam model cacat (isi kolom true_* setelah uji; evaluasi: python -m tools.eval_webcam_defect)",
++    )
+     args = ap.parse_args()
+ 
+     load_env()
+@@ -107,6 +170,7 @@ def main() -> None:
+     camera = Camera(cam["index"], cam["width"], cam["height"], cam["flush_frames"])
+     debug_dir = Path(cfg["paths"]["debug_dir"])
+     debug_dir = debug_dir if debug_dir.is_absolute() else ROOT / debug_dir
++    log_dir = args.log_dir if args.log_dir is None or args.log_dir.is_absolute() else ROOT / args.log_dir
+     frame_interval = 1.0 / max(1, cfg["dashboard"]["stream_fps"])
+     last_frame_sent = last_beat = 0.0
+     last_text = "SPASI = klasifikasi | q = keluar"
+@@ -141,6 +205,23 @@ def main() -> None:
+                 continue
+             last_text = format_summary(outcome)
+             print(last_text)
++            capture_ts = int(time.time() * 1000)
++            if outcome["valid"]:
++                defect = outcome["result"].get("defect_raw") or outcome["result"].get("defect") or {}
++                if defect.get("p_reject") is not None:
++                    print(
++                        f"  cacat: p_reject {defect['p_reject']:.3f} (ambang {defect.get('threshold')}, "
++                        f"masukan {defect.get('input')})"
++                    )
++                elif defect.get("reason"):
++                    print(f"  cacat: tidak dinilai ({defect['reason']})")
++            if log_dir is not None:
++                csv_path = log_dir / "results.csv"
++                raw_name = f"raw_{capture_ts}.jpg"
++                write_jpeg_atomic(log_dir / raw_name, frame)
++                row = result_row(next_row_number(csv_path), capture_ts, raw_name, outcome)
++                append_result_row(csv_path, row)
++                print(f"  log uji: tomat no. {row['no']} -> {_relative(csv_path)}")
+             image_path = None
+             if outcome["valid"]:
+                 ts = int(time.time() * 1000)
+diff --git a/tools/eval_webcam_defect.py b/tools/eval_webcam_defect.py
+new file mode 100644
+index 0000000..f6f1e4a
+--- /dev/null
++++ b/tools/eval_webcam_defect.py
+@@ -0,0 +1,144 @@
++"""Evaluasi uji webcam model cacat dari results.csv hasil `tools.camera_predict --log-dir`.
++
++Isi dulu kolom true_defect_level (1 = tanpa cacat, 2 = cacat ringan, 3 = cacat jelas) di results.csv.
++Ambang DIBEKUKAN sebelum melihat data (bawaan 0,5, sama dengan API) supaya hasilnya jujur; tabel
++sapuan ambang hanya untuk informasi dan tidak boleh dipakai memilih ambang pada data yang sama.
++
++    python -m tools.eval_webcam_defect --csv data/webcam_test/results.csv [--threshold 0.5] [--out laporan.md]
++"""
++from __future__ import annotations
++
++import argparse
++import csv
++from pathlib import Path
++from typing import Any
++
++from ml.metrics import binary_ranking_metrics, wilson_interval
++from ml.run_logging import render_table
++
++GATE_MIN_RECALL = 0.70
++GATE_MAX_FPR = 0.10
++GATE_MIN_POSITIVES = 10
++SWEEP = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
++
++
++def load_rows(path: Path) -> list[dict[str, str]]:
++    with Path(path).open(newline="", encoding="utf-8-sig") as file:
++        return list(csv.DictReader(file))
++
++
++def _level(row: dict[str, str]) -> int | None:
++    text = (row.get("true_defect_level") or "").strip()
++    return int(text) if text in {"1", "2", "3"} else None
++
++
++def _score(row: dict[str, str]) -> float | None:
++    text = (row.get("defect_p_reject") or "").strip()
++    return float(text) if text else None
++
++
++def _proportion(successes: int, total: int) -> str:
++    interval = wilson_interval(successes, total)
++    if interval is None:
++        return "-"
++    return f"{successes}/{total} = {successes / total:.0%} (95%: {interval[0]:.0%}-{interval[1]:.0%})"
++
++
++def evaluate(rows: list[dict[str, str]], threshold: float = 0.5) -> dict[str, Any]:
++    labeled = [(row, _level(row), _score(row)) for row in rows if _level(row) is not None]
++    per_level: dict[int, dict[str, int]] = {}
++    for level in (1, 2, 3):
++        group = [(score) for _, lvl, score in labeled if lvl == level]
++        per_level[level] = {
++            "n": len(group),
++            "not_assessed": sum(1 for score in group if score is None),
++            "flagged": sum(1 for score in group if score is not None and score >= threshold),
++        }
++    assessed = [(lvl, score) for _, lvl, score in labeled if score is not None and lvl in (1, 3)]
++    ranking = binary_ranking_metrics(
++        [1 if lvl == 3 else 0 for lvl, _ in assessed],
++        [score for _, score in assessed],
++        max_fpr=GATE_MAX_FPR,
++        threshold=threshold,
++    )
++    sweep = []
++    for cut in SWEEP:
++        entry = {"threshold": cut}
++        for level in (1, 2, 3):
++            scores = [score for _, lvl, score in labeled if lvl == level]
++            entry[level] = sum(1 for score in scores if score is not None and score >= cut)
++        sweep.append(entry)
++    positives, negatives = per_level[3]["n"], per_level[1]["n"]
++    recall = per_level[3]["flagged"] / positives if positives else None
++    fpr = per_level[1]["flagged"] / negatives if negatives else None
++    if positives < GATE_MIN_POSITIVES or negatives == 0:
++        verdict = f"TIDAK DAPAT DINILAI (foto level 3 kurang dari {GATE_MIN_POSITIVES}, atau tanpa level 1)"
++    elif recall >= GATE_MIN_RECALL and fpr <= GATE_MAX_FPR:
++        verdict = "LULUS"
++    else:
++        verdict = "BELUM LULUS"
++    return {
++        "threshold": threshold,
++        "rows_total": len(rows),
++        "rows_labeled": len(labeled),
++        "per_level": per_level,
++        "ranking": ranking,
++        "sweep": sweep,
++        "recall": recall,
++        "fpr": fpr,
++        "verdict": verdict,
++    }
++
++
++def render(result: dict[str, Any]) -> str:
++    per_level = result["per_level"]
++    level_rows = [
++        [f"level {level}", v["n"], v["not_assessed"], v["flagged"],
++         _proportion(v["flagged"], v["n"])]
++        for level, v in sorted(per_level.items())
++    ]
++    ranking = result["ranking"]
++    summary = [
++        ["ambang (dibekukan)", result["threshold"]],
++        ["baris di CSV / berlabel", f"{result['rows_total']} / {result['rows_labeled']}"],
++        ["recall level 3 (tidak dinilai dihitung terlewat)", _proportion(per_level[3]["flagged"], per_level[3]["n"])],
++        ["level 1 salah ditandai cacat", _proportion(per_level[1]["flagged"], per_level[1]["n"])],
++        ["AUC level 1 vs 3 (hanya yang dinilai)", ranking["auc"]],
++    ]
++    sweep_rows = [
++        [entry["threshold"], _proportion(entry[3], per_level[3]["n"]),
++         _proportion(entry[1], per_level[1]["n"]), _proportion(entry[2], per_level[2]["n"])]
++        for entry in result["sweep"]
++    ]
++    return "\n\n".join([
++        "# Evaluasi uji webcam model cacat",
++        "## Per level cacat sebenarnya\n\n"
++        + render_table(["level", "n", "tidak dinilai", "ditandai cacat", "proporsi"], level_rows),
++        "## Ringkasan\n\n" + render_table(["ukuran", "nilai"], summary),
++        f"## Gerbang\n\nSyarat (ambang beku {result['threshold']}): recall level 3 >= {GATE_MIN_RECALL:.0%}, "
++        f"level 1 salah ditandai <= {GATE_MAX_FPR:.0%}, dan foto level 3 minimal {GATE_MIN_POSITIVES}.\n"
++        f"Hasil: **{result['verdict']}**.",
++        "## Sapuan ambang (hanya informasi)\n\n"
++        + render_table(["ambang", "level 3 ditandai", "level 1 ditandai", "level 2 ditandai"], sweep_rows)
++        + "\n\nJangan memilih ambang dari tabel ini lalu menilainya pada data yang sama; ambang baru "
++          "harus diuji pada foto webcam baru.",
++    ])
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(prog="python -m tools.eval_webcam_defect", description=__doc__.splitlines()[0])
++    parser.add_argument("--csv", required=True, type=Path)
++    parser.add_argument("--threshold", type=float, default=0.5, help="ambang beku (bawaan 0,5)")
++    parser.add_argument("--out", type=Path, default=None, help="simpan laporan Markdown")
++    args = parser.parse_args()
++    result = evaluate(load_rows(args.csv), args.threshold)
++    if result["rows_labeled"] == 0:
++        raise SystemExit("Belum ada baris berlabel: isi kolom true_defect_level (1/2/3) di CSV.")
++    text = render(result)
++    print(text)
++    if args.out:
++        args.out.write_text(text + "\n", encoding="utf-8")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/vision/crop.py b/vision/crop.py
+index 804031d..a074243 100644
+--- a/vision/crop.py
++++ b/vision/crop.py
+@@ -142,3 +142,20 @@ def crop_largest_tomato(
+         if is_clean_single_tomato(region, min_solidity):
+             return crop_region(image_bgr, region, size=size, neutral_background=neutral_background)
+     return None
++
++
++def crop_for_inference(image, background: str, size: int = 256):
++    """Gambar PIL -> crop PIL untuk model cacat, atau None bila tidak ada tomat utuh.
++
++    Satu-satunya jalur crop saat inferensi dan evaluasi (API dan ml.train memakainya). background:
++    "neutral" atau "keep", sama dengan cara dataset training dibuat. Uji solidity dilonggarkan
++    (min_solidity=0): di alat hanya ada satu tomat, dan tomat berkelopak besar tidak boleh ditolak.
++    """
++    from PIL import Image
++
++    if background not in ("neutral", "keep"):
++        raise ValueError("background must be 'neutral' or 'keep'.")
++    crop = crop_largest_tomato(
++        pil_to_bgr(image), size=size, neutral_background=(background == "neutral"), min_solidity=0.0
++    )
++    return None if crop is None else Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))

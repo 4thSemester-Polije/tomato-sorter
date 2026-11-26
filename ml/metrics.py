@@ -59,6 +59,17 @@ def classification_metrics(
     }
 
 
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Rentang kepercayaan 95% (Wilson) untuk proporsi; None bila total 0. Lebih jujur daripada p +- galat pada n kecil."""
+    if total <= 0:
+        return None
+    proportion = successes / total
+    denominator = 1 + z * z / total
+    center = (proportion + z * z / (2 * total)) / denominator
+    half = z * np.sqrt(proportion * (1 - proportion) / total + z * z / (4 * total * total)) / denominator
+    return max(0.0, float(center - half)), min(1.0, float(center + half))
+
+
 def binary_ranking_metrics(
     expected: Sequence[int],
     scores: Sequence[float],

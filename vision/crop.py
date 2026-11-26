@@ -142,3 +142,20 @@ def crop_largest_tomato(
         if is_clean_single_tomato(region, min_solidity):
             return crop_region(image_bgr, region, size=size, neutral_background=neutral_background)
     return None
+
+
+def crop_for_inference(image, background: str, size: int = 256):
+    """Gambar PIL -> crop PIL untuk model cacat, atau None bila tidak ada tomat utuh.
+
+    Satu-satunya jalur crop saat inferensi dan evaluasi (API dan ml.train memakainya). background:
+    "neutral" atau "keep", sama dengan cara dataset training dibuat. Uji solidity dilonggarkan
+    (min_solidity=0): di alat hanya ada satu tomat, dan tomat berkelopak besar tidak boleh ditolak.
+    """
+    from PIL import Image
+
+    if background not in ("neutral", "keep"):
+        raise ValueError("background must be 'neutral' or 'keep'.")
+    crop = crop_largest_tomato(
+        pil_to_bgr(image), size=size, neutral_background=(background == "neutral"), min_solidity=0.0
+    )
+    return None if crop is None else Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))

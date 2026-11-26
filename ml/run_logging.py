@@ -410,8 +410,13 @@ def start_run(
 # --------------------------------------------------------------------------- grafik
 
 
-def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
-    """Kurva loss dan akurasi (train vs val) per task. Dilewati bila matplotlib tidak ada."""
+def _pyplot() -> Any:
+    """pyplot dengan backend Agg, atau None bila matplotlib tidak terpasang.
+
+    MPLBACKEND bawaan Colab/Jupyter (module://matplotlib_inline...) tidak valid di luar notebook
+    (mis. virtualenv terpisah) dan membuat `import matplotlib` melempar ValueError, jadi dipaksa Agg.
+    """
+    os.environ["MPLBACKEND"] = "Agg"
     try:
         import matplotlib
 
@@ -419,7 +424,23 @@ def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
         import matplotlib.pyplot as plt
     except ImportError:
         logger.warning("matplotlib tidak terpasang; grafik dilewati (pip install matplotlib).")
+        return None
+    return plt
+
+
+def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
+    """Kurva loss dan akurasi (train vs val) per task. Gagal/tanpa matplotlib: dilewati, tidak error."""
+    plt = _pyplot()
+    if plt is None:
         return []
+    try:
+        return _draw_curves(plt, history_path, output_dir)
+    except Exception as exc:  # noqa: BLE001 - grafik hanya pelengkap; tidak boleh menggagalkan training
+        logger.warning("Grafik kurva dilewati: %s", exc)
+        return []
+
+
+def _draw_curves(plt: Any, history_path: Path, output_dir: Path) -> list[Path]:
     rows = read_history(history_path)
     written: list[Path] = []
     for task in dict.fromkeys(row["task"] for row in rows):
@@ -451,13 +472,17 @@ def plot_curves(history_path: Path, output_dir: Path) -> list[Path]:
 
 
 def plot_confusion(metrics: Mapping[str, Any], output_path: Path, title: str) -> Path | None:
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
+    plt = _pyplot()
+    if plt is None:
         return None
+    try:
+        return _draw_confusion(plt, metrics, output_path, title)
+    except Exception as exc:  # noqa: BLE001 - lihat plot_curves
+        logger.warning("Grafik confusion matrix dilewati: %s", exc)
+        return None
+
+
+def _draw_confusion(plt: Any, metrics: Mapping[str, Any], output_path: Path, title: str) -> Path:
     classes = list(metrics["classes"])
     matrix = metrics["confusion_matrix"]
     figure, axis = plt.subplots(figsize=(1.6 + 1.2 * len(classes), 1.4 + 1.1 * len(classes)))

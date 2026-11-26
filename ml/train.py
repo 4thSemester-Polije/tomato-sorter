@@ -600,17 +600,10 @@ def _evaluate_primary(
 
 
 def _crop_for_inference(image: Any, mode: str) -> Any:
-    """Crop tomat dengan fungsi yang sama seperti persiapan dataset (vision.crop), atau None."""
-    import cv2
-    from PIL import Image
+    """Crop tomat lewat jalur yang sama dengan API (vision.crop.crop_for_inference), atau None."""
+    from vision.crop import crop_for_inference
 
-    from vision.crop import crop_largest_tomato, pil_to_bgr
-
-    # Di alat hanya ada satu tomat: tidak perlu uji solidity ketat (itu untuk memurnikan dataset).
-    crop = crop_largest_tomato(
-        pil_to_bgr(image), size=256, neutral_background=(mode == "neutral"), min_solidity=0.0
-    )
-    return None if crop is None else Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+    return crop_for_inference(image, mode)
 
 
 def _evaluate_defect_primary(

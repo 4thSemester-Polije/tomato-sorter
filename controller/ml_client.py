@@ -7,21 +7,31 @@ from urllib import request
 from urllib.parse import urlencode
 
 
-def build_multipart(jpeg: bytes, filename: str = "frame.jpg") -> tuple[bytes, str]:
+def build_multipart(
+    jpeg: bytes, filename: str = "frame.jpg", frame_jpeg: bytes | None = None
+) -> tuple[bytes, str]:
+    """Badan multipart: `file` (gambar untuk model kematangan) dan, opsional, `frame` (frame mentah untuk model cacat)."""
     boundary = uuid.uuid4().hex
-    head = (
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
-        "Content-Type: image/jpeg\r\n\r\n"
-    ).encode()
-    return head + jpeg + f"\r\n--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
+
+    def part(name: str, upload_name: str, data: bytes) -> bytes:
+        head = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{upload_name}\"\r\n"
+            "Content-Type: image/jpeg\r\n\r\n"
+        ).encode()
+        return head + data + b"\r\n"
+
+    body = part("file", filename, jpeg)
+    if frame_jpeg is not None:
+        body += part("frame", "raw.jpg", frame_jpeg)
+    return body + f"--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}"
 
 
 def make_image_predictor(api_url: str, architecture: str | None = None, timeout_s: float = 10.0):
     """Hasilkan fungsi f(jpeg_bytes) -> dict respons /predict. Melempar OSError/ValueError bila gagal."""
     url = api_url.rstrip("/") + "/predict" + ("?" + urlencode({"architecture": architecture}) if architecture else "")
 
-    def predict(jpeg: bytes) -> dict:
-        body, ctype = build_multipart(jpeg)
+    def predict(jpeg: bytes, frame_jpeg: bytes | None = None) -> dict:
+        body, ctype = build_multipart(jpeg, frame_jpeg=frame_jpeg)
         req = request.Request(url, data=body, headers={"Content-Type": ctype}, method="POST")
         with request.urlopen(req, timeout=timeout_s) as resp:  # URLError/HTTPError adalah subclass OSError
             result = json.loads(resp.read().decode("utf-8"))
@@ -29,6 +39,7 @@ def make_image_predictor(api_url: str, architecture: str | None = None, timeout_
             raise ValueError(f"respons ML tidak valid: {str(result)[:120]}")
         return result
 
+    predict.accepts_frame = True  # pemanggil boleh menyertakan frame_jpeg; predictor lain (mis. palsu di tes) tidak
     return predict
 
 
@@ -47,4 +58,11 @@ def check_api(api_url: str, architecture: str | None = None, timeout_s: float = 
     if info.get("status") != "ready":
         missing = ", ".join(info.get("missing_files") or []) or "tidak diketahui"
         return False, f"Model {chosen} belum siap di API (file hilang: {missing}). Salin file model ke folder models/."
-    return True, f"API model siap ({chosen})"
+    message = f"API model siap ({chosen})"
+    head = body.get("defect_head")
+    if head:  # tampilkan model cacat mana yang aktif, supaya salah konfigurasi langsung terlihat
+        message += (
+            f" | cacat: masukan {head.get('trained_input')}, ambang {head.get('threshold')}, "
+            f"ikut grade: {'ya' if head.get('used_for_grade') else 'tidak'}"
+        )
+    return True, message

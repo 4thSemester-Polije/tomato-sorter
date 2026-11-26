@@ -47,6 +47,79 @@ NOT_ASSESSED_DEFECT: dict[str, Any] = {
 }
 
 
+DEFECT_THRESHOLD_ENV = "TOMATO_DEFECT_THRESHOLD"
+DEFAULT_DEFECT_THRESHOLD = 0.5
+
+
+def _defect_threshold() -> float:
+    """Ambang p_reject untuk menyatakan cacat jelas (bawaan 0,5). Atur lewat TOMATO_DEFECT_THRESHOLD."""
+    raw = os.environ.get(DEFECT_THRESHOLD_ENV)
+    if raw is None or raw.strip() == "":
+        return DEFAULT_DEFECT_THRESHOLD
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not 0.0 < value < 1.0:
+        logger.warning(
+            "%s=%r tidak valid (harus di antara 0 dan 1); memakai %.2f.",
+            DEFECT_THRESHOLD_ENV, raw, DEFAULT_DEFECT_THRESHOLD,
+        )
+        return DEFAULT_DEFECT_THRESHOLD
+    return value
+
+
+def _not_assessed(reason: str) -> dict[str, Any]:
+    return {**NOT_ASSESSED_DEFECT, "probabilities": {}, "reason": reason}
+
+
+def _defect_training_input(metadata: dict[str, Any]) -> str | None:
+    """"neutral"/"keep" bila model cacat dilatih pada crop tomat (metadata dari ml.train + prepare_defect_v2).
+
+    None berarti model lama yang dilatih pada foto penuh.
+    """
+    background = (metadata.get("data_preparation") or {}).get("background")
+    return background if background in ("neutral", "keep") else None
+
+
+def _predict_defect(
+    defect_model: Any,
+    defect_metadata: dict[str, Any],
+    preprocess_input: Any,
+    processed: np.ndarray,
+    defect_source: Image.Image | None,
+    threshold: float,
+) -> dict[str, Any]:
+    """Model lama: argmax pada masukan yang sama dengan kematangan. Model crop: crop dari frame mentah."""
+    mode = _defect_training_input(defect_metadata)
+    if mode is None:
+        return _class_prediction(
+            defect_model.predict(processed, verbose=0)[0], defect_metadata["class_names"], DEFECT_LEVELS
+        )
+    if defect_source is None:
+        # Model dilatih pada crop mentah; gambar PCV (CLAHE) bukan masukan yang sama. Jangan menebak.
+        return _not_assessed("tanpa_frame_mentah")
+    from vision.crop import crop_for_inference
+
+    crop = crop_for_inference(defect_source, mode)
+    if crop is None:
+        return _not_assessed("crop_gagal")
+    pixels = np.asarray(crop.resize((INPUT_SIZE[1], INPUT_SIZE[0])), dtype=np.float32)
+    probabilities = defect_model.predict(preprocess_input(np.expand_dims(pixels, axis=0)), verbose=0)[0]
+    names = list(defect_metadata["class_names"])
+    p_reject = float(probabilities[names.index("reject")])
+    chosen = "reject" if p_reject >= threshold else "healthy"
+    return {
+        "class": chosen,
+        "level": DEFECT_LEVELS[chosen],
+        "confidence": p_reject if chosen == "reject" else 1.0 - p_reject,
+        "probabilities": {label: float(probabilities[i]) for i, label in enumerate(names)},
+        "p_reject": p_reject,
+        "threshold": threshold,
+        "input": f"crop_{mode}",
+    }
+
+
 def _grade_uses_defect() -> bool:
     """Bawaan: grade hanya dari kematangan. Atur TOMATO_GRADE_USES_DEFECT=1 agar kepala cacat ikut dipakai.
 
@@ -62,8 +135,12 @@ def _public_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("grade_basis") != "ripeness":
         return result
     shown = dict(result)
-    shown["defect_raw"] = result.get("defect")
-    shown["defect"] = dict(NOT_ASSESSED_DEFECT)
+    raw = result.get("defect") or {}
+    shown["defect_raw"] = raw
+    shown["defect"] = {
+        **NOT_ASSESSED_DEFECT,
+        "reason": raw.get("reason") if raw.get("level") is None else "tidak_ikut_grade",
+    }
     return shown
 
 
@@ -78,11 +155,37 @@ def warm_up(models_dir: Path | None = None, architecture: str | None = None) -> 
     try:
         chosen = architecture or _default_architecture()
         predict_image(Image.new("RGB", INPUT_SIZE, (128, 128, 128)), directory, chosen)
+        _warm_defect_head(directory, chosen)
     except Exception as exc:  # noqa: BLE001 - server harus tetap hidup agar /health bisa menjelaskan masalahnya
         logger.warning("Warm-up model dilewati: %s", exc)
         return False
     logger.info("Warm-up model selesai (%s).", chosen)
     return True
+
+
+def _warm_defect_head(directory: Path, architecture: str) -> None:
+    """Panaskan jalur crop + model cacat bila model cacat dilatih pada crop (best-effort, tidak menggagalkan warm-up)."""
+    try:
+        _, _, _, defect_metadata, _ = _load_models(str(directory.resolve()), architecture)
+        if _defect_training_input(defect_metadata) is None:
+            return
+        predict_image(
+            Image.new("RGB", INPUT_SIZE, (128, 128, 128)),
+            directory,
+            architecture,
+            defect_source=_warmup_scene(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Pemanasan model cacat dilewati: %s", exc)
+
+
+def _warmup_scene() -> Image.Image:
+    """Tomat sintetis agar jalur crop dan model cacat ikut dipanaskan (bukan hanya model kematangan)."""
+    from PIL import ImageDraw
+
+    scene = Image.new("RGB", (640, 480), (255, 255, 255))
+    ImageDraw.Draw(scene).ellipse((220, 140, 420, 340), fill=(200, 40, 30))
+    return scene
 
 
 @asynccontextmanager
@@ -165,8 +268,13 @@ def predict_image(
     image: Image.Image,
     models_dir: Path = DEFAULT_MODELS_DIR,
     architecture: str = DEFAULT_ARCHITECTURE,
+    defect_source: Image.Image | None = None,
 ) -> dict[str, Any]:
-    """Run both classifiers and combine their levels using the project rubric."""
+    """Run both classifiers and combine their levels using the project rubric.
+
+    defect_source: frame mentah untuk model cacat yang dilatih pada crop tomat (lihat
+    _defect_training_input). Diabaikan oleh model cacat lama (foto penuh).
+    """
     (
         ripeness_model,
         defect_model,
@@ -178,19 +286,22 @@ def predict_image(
     pixels = np.asarray(resized, dtype=np.float32)
     processed = preprocess_input(np.expand_dims(pixels, axis=0))
     ripeness_probabilities = ripeness_model.predict(processed, verbose=0)[0]
-    defect_probabilities = defect_model.predict(processed, verbose=0)[0]
 
     ripeness = _class_prediction(
         ripeness_probabilities,
         ripeness_metadata["class_names"],
         RIPENESS_LEVELS,
     )
-    defect = _class_prediction(
-        defect_probabilities,
-        defect_metadata["class_names"],
-        DEFECT_LEVELS,
+    defect = _predict_defect(
+        defect_model,
+        defect_metadata,
+        preprocess_input,
+        processed,
+        defect_source,
+        _defect_threshold(),
     )
-    uses_defect = _grade_uses_defect()
+    # Cacat ikut grade hanya bila diaktifkan DAN berhasil dinilai (crop gagal tidak boleh dianggap sehat atau cacat).
+    uses_defect = _grade_uses_defect() and defect["level"] is not None
     return {
         "model": display_name(architecture),
         "architecture": architecture,
@@ -222,12 +333,55 @@ def health() -> dict[str, Any]:
         "architecture": default,
         "missing_files": architectures[default]["missing_files"],
         "architectures": architectures,
+        "defect_head": _defect_head_info(DEFAULT_MODELS_DIR, default),
     }
+
+
+def _defect_head_info(models_dir: Path, architecture: str) -> dict[str, Any]:
+    """Model cacat mana yang dipakai dan bagaimana: berkas, masukan saat training, ambang, ikut grade atau tidak."""
+    model_path, metadata_path = artifact_paths(models_dir, "defect", architecture)
+    info: dict[str, Any] = {
+        "model_file": str(model_path),
+        "model_exists": model_path.is_file(),
+        "trained_input": None,
+        "threshold": _defect_threshold(),
+        "used_for_grade": _grade_uses_defect(),
+    }
+    if model_path.is_file():
+        info["model_size_mb"] = round(model_path.stat().st_size / 1e6, 1)
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return info
+    mode = _defect_training_input(metadata)
+    info["trained_input"] = f"crop_{mode}" if mode else "full_frame"
+    info["data_preparation"] = metadata.get("data_preparation")
+    return info
+
+
+async def _read_image(upload: UploadFile) -> Image.Image:
+    content = await upload.read(MAX_IMAGE_BYTES + 1)
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.load()
+            return image.convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Uploaded file is not a readable JPG, PNG, or supported HEIC image.",
+        ) from exc
 
 
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
+    frame: UploadFile | None = File(
+        default=None,
+        description="Frame mentah (opsional). Dipakai model cacat yang dilatih pada crop tomat; "
+        "tanpa ini, model cacat seperti itu melaporkan tidak_dinilai.",
+    ),
     architecture: str | None = Query(
         default=None,
         pattern=ARCHITECTURE_PATTERN,
@@ -239,18 +393,9 @@ async def predict(
     ),
 ) -> dict[str, Any]:
     chosen = architecture or _default_architecture()
-    content = await file.read(MAX_IMAGE_BYTES + 1)
-    if len(content) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="Image exceeds the 10 MiB limit.")
-    try:
-        with Image.open(io.BytesIO(content)) as image:
-            image.load()
-            decoded_image = image.convert("RGB")
-    except (UnidentifiedImageError, OSError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail="Uploaded file is not a readable JPG, PNG, or supported HEIC image.",
-        ) from exc
+    decoded_image = await _read_image(file)
+    frame_image = await _read_image(frame) if frame is not None else None
+    raw_image = decoded_image
 
     pcv_summary: dict[str, Any] | None = None
     if apply_pcv:
@@ -270,8 +415,11 @@ async def predict(
             "luas_piksel": round(pcv["luas_piksel"], 1),
         }
 
+    # Dengan apply_pcv gambar asli (sebelum PCV) otomatis menjadi sumber model cacat.
+    defect_source = frame_image if frame_image is not None else (raw_image if apply_pcv else None)
+    options = {"defect_source": defect_source} if defect_source is not None else {}
     try:
-        result = predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen)
+        result = _public_result(predict_image(decoded_image, DEFAULT_MODELS_DIR, chosen, **options))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if pcv_summary is not None:

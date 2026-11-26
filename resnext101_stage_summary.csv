@@ -1,0 +1,5 @@
+﻿Stage,Bottleneck Blocks,First Block,Last Block,Input Shape,Output Shape,Grouped Conv
+Stage 1,3,unit1,unit3,"(None, 56, 56, 64)","(None, 56, 56, 256)",32 per bottleneck
+Stage 2,4,unit1,unit4,"(None, 56, 56, 256)","(None, 28, 28, 512)",32 per bottleneck
+Stage 3,23,unit1,unit23,"(None, 28, 28, 512)","(None, 14, 14, 1024)",32 per bottleneck
+Stage 4,3,unit1,unit3,"(None, 14, 14, 1024)","(None, 7, 7, 2048)",32 per bottleneck
